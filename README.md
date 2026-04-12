@@ -27,6 +27,30 @@ It is a feature missing from the Monzo App (and one of the most requested featur
 - **Health check endpoints** available at `/health` for both Azure Functions and FastAPI runtimes.
 - **Correlation IDs** supported through `X-Correlation-ID` (request/response) for easier tracing.
 
+### Financial Tracker
+
+This repository now includes a personal finance tracker extension:
+
+- `ingest_monzo` timer trigger (`hourly`) stores Monzo transactions in Azure Table Storage.
+- `ingest_csv` blob trigger ingests NatWest and PayPal CSV exports from Blob Storage.
+- CSV ingestion supports:
+  - source auto-detection (NatWest vs PayPal)
+  - file-level dedupe by SHA-256 hash
+  - transaction-level dedupe via deterministic row keys
+- `categorise` queue trigger applies merchant-to-category mappings.
+- `sweep_pots` timer trigger runs Monday mornings and performs the weekly Monzo pot sweep.
+- `debt_tracker` timer trigger recalculates debt months remaining and on-track status daily.
+- `advice_engine` timer trigger generates weekly summary advice using Azure OpenAI (GPT-4o deployment).
+- `alert` queue trigger sends overspend feed alerts when weekly discretionary spend crosses target.
+- Dashboard HTTP endpoints:
+  - `/api/finance_summary`
+  - `/api/finance_transactions`
+  - `/api/finance_advice`
+  - `/api/finance_upload_status`
+- Setup script to provision/seed finance tables: `scripts/setup_finance_tables.py`
+
+Seeded categories include: eating out, groceries, subscriptions, gambling, coffee, shopping, transport, transfers, personal care (unknown merchants default to `uncategorised`).
+
 ## Architecture
 
 - **Core logic:** Transport-agnostic Python service (`core/webhook_service.py`)
@@ -64,9 +88,41 @@ Set these as Function App settings (or in `local.settings.json` when running loc
 | `LIMIT_CRITICAL` | No | Critical threshold in pence | `10000` |
 | `ALERT_FREQUENCY` | No | Send a repeat alert every N qualifying transactions | `10` |
 
+### Additional Finance Settings
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `TRANSACTIONS_TABLE` | No | Transaction storage table | `Transactions` |
+| `CATEGORIES_TABLE` | No | Merchant-category mappings | `Categories` |
+| `BUDGET_TARGETS_TABLE` | No | Budget targets table | `BudgetTargets` |
+| `DEBT_TRACKER_TABLE` | No | Debt tracking table | `DebtTracker` |
+| `EMERGENCY_FUND_TABLE` | No | Emergency fund table | `EmergencyFund` |
+| `INGESTION_STATE_TABLE` | No | Ingestion cursors and dedupe markers | `IngestionState` |
+| `CSV_UPLOAD_CONTAINER` | No | Blob container for uploaded CSV files | `finance-uploads` |
+| `CATEGORISE_QUEUE_NAME` | No | Queue used by categorisation worker | `categorise` |
+| `INGEST_MONZO_SCHEDULE` | No | NCRONTAB schedule for Monzo ingestion | `0 0 * * * *` |
+| `SWEEP_POTS_SCHEDULE` | No | NCRONTAB schedule for weekly Monzo pot sweep | `0 0 8 * * Mon` |
+| `DEBT_TRACKER_SCHEDULE` | No | NCRONTAB schedule for debt tracking | `0 0 6 * * *` |
+| `ADVICE_ENGINE_SCHEDULE` | No | NCRONTAB schedule for weekly advice | `0 0 7 * * Mon` |
+| `ALERT_QUEUE_NAME` | No | Queue used by extended alert processing | `alerts` |
+| `MONZO_SWEEP_AMOUNT_PENCE` | No | Weekly sweep amount in pence | `10700` |
+| `MONZO_SPENDING_POT_ID` | Yes*** | Pot ID for sweep and pot-balance reporting | `pot_000...` |
+| `DEBT_TARGET_MONTHS` | No | NatWest debt target duration in months | `36` |
+| `DEBT_MONTHLY_PAYMENT_TARGET_PENCE` | No | Monthly payment target in pence | `9300` |
+| `EMERGENCY_FUND_TARGET_PENCE` | No | Emergency fund goal in pence | `720000` |
+| `AZURE_OPENAI_ENDPOINT` | Yes*** | Azure OpenAI resource endpoint | `https://<name>.openai.azure.com` |
+| `AZURE_OPENAI_API_KEY` | Yes*** | Azure OpenAI API key (or Key Vault reference) | `<secret>` |
+| `AZURE_OPENAI_DEPLOYMENT` | No | Azure OpenAI deployment name (GPT-4o) | `gpt-4o` |
+| `AZURE_OPENAI_API_VERSION` | No | Azure OpenAI API version | `2024-10-21` |
+| `WEEKLY_DISCRETIONARY_TARGET_PENCE` | No | Weekly spend target in pence | `10700` |
+
+> Keep `local.settings.json` local only and never commit it.
+
 \* Required initially. After first successful refresh+persist, storage becomes the source of truth.
 
 \** You need either `AzureWebJobsStorage` _or_ `AzureWebJobsStorage__tableServiceUri` available in the environment where the app runs.
+
+\*** Required for full financial tracker automation (sweep + advice engine).
 
 ## Local development
 
@@ -96,6 +152,47 @@ func start
 ```
 
 Webhook URL: `http://localhost:7071/api/monzo_webhook`
+
+### Provision finance tables
+
+After setting storage configuration, run:
+
+```bash
+python scripts/setup_finance_tables.py
+```
+
+This creates and seeds:
+
+- `Transactions`
+- `Categories`
+- `BudgetTargets`
+- `DebtTracker`
+- `EmergencyFund`
+- `IngestionState`
+
+### CSV export and upload flow (NatWest + PayPal)
+
+1. Export your latest transaction CSV from the NatWest app.
+2. Export your latest transaction/activity CSV from PayPal.
+3. Upload each CSV file to Blob container `finance-uploads` (or your configured container).
+4. Blob trigger `ingest_csv` runs automatically and stores normalized rows in `Transactions`.
+5. New rows are queued for `categorise` to apply merchant mappings.
+
+If the same CSV is uploaded again, file hash dedupe prevents double counting.
+
+### Dashboard (Azure Static Web Apps)
+
+Static frontend is under `staticwebapp/` (plain HTML, CSS, vanilla JS, mobile-first).
+
+- Dashboard sections:
+  - weekly spend progress
+  - debt paydown progress
+  - emergency fund progress
+  - weekly advice
+  - recent categorized transactions
+  - NatWest/PayPal upload freshness
+
+GitHub Actions workflow for frontend deploy: `.github/workflows/staticwebapp.yml`.
 
 ### Run with FastAPI
 
@@ -128,6 +225,12 @@ func azure functionapp publish <YOUR_APP_NAME>
 Webhook URL:
 - `https://<YOUR_APP_NAME>.azurewebsites.net/api/monzo_webhook`
 
+### Azure Static Web App
+
+Set GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN` and push changes under `staticwebapp/`.
+
+The workflow `.github/workflows/staticwebapp.yml` deploys the dashboard.
+
 ### Container / generic platforms
 
 Build and run locally:
@@ -154,6 +257,13 @@ Workflow file: `.github/workflows/ci.yml`.
 
 Azure deploy workflow note: `.github/workflows/main_monzowatchdog-js.yml` now enforces that one of `AzureWebJobsStorage` or `AzureWebJobsStorage__accountName` is present before deploy. If the app setting is missing, provide repository secret `AZUREWEBJOBSSTORAGE` (connection string) or `AZUREWEBJOBSSTORAGE_ACCOUNTNAME` (RBAC account name).
 
+Recommended Azure layout for this project:
+
+- Resource group: `rg-personal-finance`
+- Function App + Storage Account + Queue/Table/Blob in same subscription
+- Key Vault with Managed Identity references for secrets
+- Azure Static Web App (Free tier) for dashboard
+
 ## Getting a refresh token (one-time helper)
 
 Use `get_token.py` locally to complete OAuth and print a `MONZOREFRESHTOKEN` value:
@@ -174,6 +284,7 @@ This opens a browser, receives the callback at `http://localhost:8080/callback`,
 ## Security recommendations
 
 - Store `MONZOCLIENTSECRET` and `MONZOREFRESHTOKEN` in Azure Key Vault (or equivalent secret store).
+- Store `AZURE_OPENAI_API_KEY` in Azure Key Vault and reference via Function App settings.
 - Prefer managed identity with `AzureWebJobsStorage__tableServiceUri` in production.
 - Use a long random `WEBHOOKSECRET` and rotate it periodically.
 - If you can terminate/validate webhook auth at an upstream gateway, set `ALLOW_QUERY_SECRET=false` and use header-only auth in the app layer.

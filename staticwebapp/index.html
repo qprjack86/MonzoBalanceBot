@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Personal Finance Health</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero card">
+        <p class="eyebrow">Financial Health Tracker</p>
+        <h1>Weekly clarity. Real progress.</h1>
+        <p id="last-updated" class="muted">Loading latest data...</p>
+      </header>
+
+      <section class="card">
+        <h2>Weekly discretionary spend</h2>
+        <p id="weekly-label" class="metric">GBP 0.00 / GBP 107.00</p>
+        <div class="bar"><span id="weekly-bar"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>NatWest debt paydown</h2>
+        <p id="debt-label" class="metric">On track</p>
+        <div class="bar"><span id="debt-bar"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>Emergency fund</h2>
+        <p id="fund-label" class="metric">GBP 0.00 / GBP 7,200.00</p>
+        <div class="bar"><span id="fund-bar"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>Weekly advice</h2>
+        <p id="advice-text" class="advice">No advice generated yet.</p>
+      </section>
+
+      <section class="card">
+        <h2>CSV freshness</h2>
+        <p id="natwest-upload">NatWest: unknown</p>
+        <p id="paypal-upload">PayPal: unknown</p>
+      </section>
+
+      <section class="card">
+        <div class="transactions-header">
+          <h2>Recent transactions</h2>
+          <select id="category-filter">
+            <option value="">All categories</option>
+            <option value="eating out">Eating out</option>
+            <option value="groceries">Groceries</option>
+            <option value="subscriptions">Subscriptions</option>
+            <option value="gambling">Gambling</option>
+            <option value="coffee">Coffee</option>
+            <option value="shopping">Shopping</option>
+            <option value="transport">Transport</option>
+            <option value="transfers">Transfers</option>
+            <option value="personal care">Personal care</option>
+            <option value="uncategorised">Uncategorised</option>
+          </select>
+        </div>
+        <ul id="transactions-list" class="transactions"></ul>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

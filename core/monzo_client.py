@@ -53,6 +53,58 @@ class MonzoClient:
             timeout=self.timeout,
         )
 
+    def list_transactions(
+        self,
+        access_token: str,
+        account_id: str,
+        since_iso: str | None = None,
+        before_iso: str | None = None,
+        limit: int = 100,
+    ) -> requests.Response:
+        params = {
+            "account_id": account_id,
+            "limit": limit,
+            "expand[]": "merchant",
+        }
+        if since_iso:
+            params["since"] = since_iso
+        if before_iso:
+            params["before"] = before_iso
+
+        return self.session.get(
+            f"{MONZO_API}/transactions",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+            timeout=self.timeout,
+        )
+
+    def deposit_to_pot(
+        self,
+        access_token: str,
+        pot_id: str,
+        source_account_id: str,
+        amount_pence: int,
+        dedupe_id: str,
+    ) -> requests.Response:
+        return self.session.put(
+            f"{MONZO_API}/pots/{pot_id}/deposit",
+            headers={"Authorization": f"Bearer {access_token}"},
+            data={
+                "source_account_id": source_account_id,
+                "amount": amount_pence,
+                "dedupe_id": dedupe_id,
+            },
+            timeout=self.timeout,
+        )
+
+    def list_pots(self, access_token: str, current_account_id: str) -> requests.Response:
+        return self.session.get(
+            f"{MONZO_API}/pots",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"current_account_id": current_account_id},
+            timeout=self.timeout,
+        )
+
     def post_feed(self, access_token: str, account_id: str, click_url: str, title: str, body: str, color: str) -> None:
         self.session.post(
             f"{MONZO_API}/feed",

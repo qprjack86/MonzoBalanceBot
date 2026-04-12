@@ -1,0 +1,148 @@
+:root {
+  --bg: #f7f5ef;
+  --card: #fffef8;
+  --ink: #1f2a2e;
+  --muted: #59666b;
+  --accent: #0f8b8d;
+  --accent-soft: #b6ece6;
+  --warning: #d7263d;
+  --ok: #168a45;
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 10% 10%, #fcecc7 0, transparent 45%),
+    radial-gradient(circle at 90% 0, #d2f0fb 0, transparent 40%),
+    var(--bg);
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px;
+  border: 1px solid #ece5d9;
+  box-shadow: 0 8px 24px rgba(31, 42, 46, 0.06);
+  animation: reveal 320ms ease both;
+}
+
+.hero h1 {
+  margin: 6px 0;
+  line-height: 1.1;
+}
+
+.eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.metric {
+  margin: 6px 0 10px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #ebe7de;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #66c4ba);
+  transition: width 320ms ease;
+}
+
+.advice {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.transactions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#category-filter {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  border-radius: 10px;
+  border: 1px solid #d8d1c4;
+  background: white;
+  padding: 6px 8px;
+}
+
+.transactions {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.transactions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px dashed #ddd3c3;
+  padding-bottom: 6px;
+  font-size: 14px;
+}
+
+.transactions .meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transactions .amount {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 500;
+}
+
+.amount.negative {
+  color: var(--warning);
+}
+
+.amount.positive {
+  color: var(--ok);
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
