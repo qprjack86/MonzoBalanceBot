@@ -36,6 +36,26 @@ class Settings:
     seen_ttl: int
     # Backwards-compatible default: Monzo usually authenticates webhooks via query-string secret.
     allow_query_secret: bool = True
+    transactions_table_name: str = "Transactions"
+    categories_table_name: str = "Categories"
+    budget_targets_table_name: str = "BudgetTargets"
+    debt_tracker_table_name: str = "DebtTracker"
+    emergency_fund_table_name: str = "EmergencyFund"
+    upload_state_table_name: str = "UploadState"
+    sync_state_table_name: str = "SyncState"
+    monzo_ingest_lookback_days: int = 7
+    categorise_queue_name: str = "categorise-jobs"
+    alert_queue_name: str = "finance-alerts"
+    csv_uploads_container: str = "csv-uploads"
+    monzo_spending_pot_id: str | None = None
+    weekly_sweep_amount_pence: int = 10700
+    weekly_discretionary_target_pence: int = 10700
+    debt_target_months: int = 36
+    debt_monthly_payment_target_pence: int = 9300
+    emergency_fund_target_pence: int = 720000
+    azure_openai_endpoint: str | None = None
+    azure_openai_api_version: str = "2024-10-21"
+    azure_openai_deployment: str | None = None
 
 
 def load_settings() -> Settings:
@@ -56,4 +76,24 @@ def load_settings() -> Settings:
         partition_key="monzo",
         row_key="bot",
         seen_ttl=600,
+        transactions_table_name=str(_get_env("TRANSACTIONS_TABLE_NAME", default="Transactions")),
+        categories_table_name=str(_get_env("CATEGORIES_TABLE_NAME", default="Categories")),
+        budget_targets_table_name=str(_get_env("BUDGET_TARGETS_TABLE_NAME", default="BudgetTargets")),
+        debt_tracker_table_name=str(_get_env("DEBT_TRACKER_TABLE_NAME", default="DebtTracker")),
+        emergency_fund_table_name=str(_get_env("EMERGENCY_FUND_TABLE_NAME", default="EmergencyFund")),
+        upload_state_table_name=str(_get_env("UPLOAD_STATE_TABLE_NAME", default="UploadState")),
+        sync_state_table_name=str(_get_env("SYNC_STATE_TABLE_NAME", default="SyncState")),
+        monzo_ingest_lookback_days=int(_get_env("MONZO_INGEST_LOOKBACK_DAYS", default=7)),
+        categorise_queue_name=str(_get_env("CATEGORISE_QUEUE_NAME", default="categorise-jobs")),
+        alert_queue_name=str(_get_env("ALERT_QUEUE_NAME", default="finance-alerts")),
+        csv_uploads_container=str(_get_env("CSV_UPLOADS_CONTAINER", default="csv-uploads")),
+        monzo_spending_pot_id=_get_env("MONZO_SPENDING_POT_ID"),
+        weekly_sweep_amount_pence=int(_get_env("WEEKLY_SWEEP_AMOUNT_PENCE", default=10700)),
+        weekly_discretionary_target_pence=int(_get_env("WEEKLY_DISCRETIONARY_TARGET_PENCE", default=10700)),
+        debt_target_months=int(_get_env("DEBT_TARGET_MONTHS", default=36)),
+        debt_monthly_payment_target_pence=int(_get_env("DEBT_MONTHLY_PAYMENT_TARGET_PENCE", default=9300)),
+        emergency_fund_target_pence=int(_get_env("EMERGENCY_FUND_TARGET_PENCE", default=720000)),
+        azure_openai_endpoint=_get_env("AZURE_OPENAI_ENDPOINT"),
+        azure_openai_api_version=str(_get_env("AZURE_OPENAI_API_VERSION", default="2024-10-21")),
+        azure_openai_deployment=_get_env("AZURE_OPENAI_DEPLOYMENT"),
     )

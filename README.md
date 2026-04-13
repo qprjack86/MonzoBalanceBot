@@ -64,6 +64,57 @@ Set these as Function App settings (or in `local.settings.json` when running loc
 | `LIMIT_CRITICAL` | No | Critical threshold in pence | `10000` |
 | `ALERT_FREQUENCY` | No | Send a repeat alert every N qualifying transactions | `10` |
 
+### Personal Finance Tracker (Phase 1) settings
+
+Add these app settings for the new ingestion + categorisation flow:
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `CSV_UPLOADS_CONTAINER` | Yes | Blob container for NatWest/PayPal CSV uploads | `csv-uploads` |
+| `CATEGORISE_QUEUE_NAME` | Yes | Queue used to fan out categorisation jobs | `categorise-jobs` |
+| `TRANSACTIONS_TABLE_NAME` | No | Transactions table | `Transactions` |
+| `CATEGORIES_TABLE_NAME` | No | Merchant category mapping table | `Categories` |
+| `BUDGET_TARGETS_TABLE_NAME` | No | Budget target table | `BudgetTargets` |
+| `DEBT_TRACKER_TABLE_NAME` | No | Debt tracker table | `DebtTracker` |
+| `EMERGENCY_FUND_TABLE_NAME` | No | Emergency fund table | `EmergencyFund` |
+| `UPLOAD_STATE_TABLE_NAME` | No | CSV dedupe/upload state table | `UploadState` |
+| `SYNC_STATE_TABLE_NAME` | No | Ingestion cursor table | `SyncState` |
+| `MONZO_INGEST_LOOKBACK_DAYS` | No | Initial lookback when no Monzo cursor exists | `7` |
+
+### Personal Finance Tracker (Phase 2) settings
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `ALERT_QUEUE_NAME` | No | Queue for finance alerts (overspend, low balance extensions) | `finance-alerts` |
+| `MONZO_SPENDING_POT_ID` | Yes* | Monzo pot ID used for weekly sweep | `pot_000...` |
+| `WEEKLY_SWEEP_AMOUNT_PENCE` | No | Weekly pot sweep amount in pence | `10700` |
+| `WEEKLY_DISCRETIONARY_TARGET_PENCE` | No | Weekly discretionary target fallback in pence | `10700` |
+| `DEBT_TARGET_MONTHS` | No | Debt clearance target window in months | `36` |
+| `DEBT_MONTHLY_PAYMENT_TARGET_PENCE` | No | Monthly debt payment target in pence | `9300` |
+| `EMERGENCY_FUND_TARGET_PENCE` | No | Emergency fund target in pence | `720000` |
+| `AZURE_OPENAI_ENDPOINT` | Yes** | Azure OpenAI endpoint | `https://<name>.openai.azure.com` |
+| `AZURE_OPENAI_DEPLOYMENT` | Yes** | Azure OpenAI deployment name (GPT-4o) | `gpt-4o` |
+| `AZURE_OPENAI_API_VERSION` | No | Azure OpenAI API version | `2024-10-21` |
+| `AZURE_OPENAI_API_KEY` | Optional** | Key auth fallback (prefer managed identity token auth) | `...` |
+
+\* Required for `sweep_pots` and pot balance on dashboard.
+
+\** Required for `advice_engine`.
+
+See schema details in `docs/azure_table_schema.md` and structure in `docs/PROJECT_STRUCTURE.md`.
+
+### Set up Azure Tables and seed baseline data
+
+Run this once per environment:
+
+```bash
+python scripts/setup_finance_tables.py
+```
+
+This creates and seeds:
+- `Transactions`, `Categories`, `BudgetTargets`, `DebtTracker`, `EmergencyFund`
+- Operational tables used by ingestion (`UploadState`, `SyncState`, `Sweeps`, `AdviceHistory`)
+
 \* Required initially. After first successful refresh+persist, storage becomes the source of truth.
 
 \** You need either `AzureWebJobsStorage` _or_ `AzureWebJobsStorage__tableServiceUri` available in the environment where the app runs.
@@ -88,6 +139,60 @@ pip install -r requirements-dev.txt
 ```
 
 3. Configure environment variables listed above. For Azure local runtime, put them in `local.settings.json`. For local FastAPI development without Azure Storage, set `STATE_BACKEND=memory`.
+
+### CSV export and upload flow (NatWest + PayPal)
+
+1. Export a transactions CSV from NatWest mobile app.
+2. Export activity CSV from PayPal website.
+3. Upload each file to the blob container defined by `CSV_UPLOADS_CONTAINER`.
+4. Blob trigger `ingest_csv` auto-detects source format (`natwest` or `paypal`) and stores normalised rows in Table Storage.
+5. Duplicate uploads are ignored using a SHA256 file hash persisted in `UploadState`.
+6. New rows are pushed to `CATEGORISE_QUEUE_NAME` and categorised by merchant mapping in the `categorise` queue trigger.
+
+## Finance function inventory
+
+- `ingest_monzo` - Timer trigger hourly. Pulls Monzo transactions, stores to `Transactions`, and raises weekly overspend alert events.
+- `ingest_csv` - Blob trigger for NatWest/PayPal CSV uploads. Auto-detects source and enforces file-hash dedupe.
+- `categorise` - Queue trigger. Applies merchant mapping from `Categories` and writes category back to `Transactions`.
+- `sweep_pots` - Timer trigger every Monday at 08:00 UTC. Sweeps GBP 107 (default) into configured Monzo pot.
+- `debt_tracker` - Timer trigger daily. Updates debt metrics from latest NatWest balance metadata.
+- `advice_engine` - Timer trigger every Monday at 07:00 UTC. Generates weekly advice with Azure OpenAI (GPT-4o deployment).
+- `alert` - Queue trigger for financial alert notifications in Monzo feed (includes weekly overspend signal).
+
+## Dashboard API endpoints
+
+- `GET /api/dashboard/summary`
+- `GET /api/dashboard/transactions`
+- `GET /api/dashboard/transactions?category=<category>`
+
+These are consumed by the static web dashboard in `staticwebapp/`.
+
+## Static web dashboard (Azure Static Web Apps Free)
+
+Frontend files are in `staticwebapp/` and use plain HTML/CSS/vanilla JS.
+
+- Local static preview:
+
+```bash
+cd staticwebapp
+python -m http.server 4173
+```
+
+- By default frontend calls `/api/...`.
+- If your Function App is hosted separately, set `window.FINANCE_API_BASE` before loading `app.js` or adjust `staticwebapp/app.js`.
+- GitHub Actions deployment workflow: `.github/workflows/staticwebapp.yml`.
+
+## Secrets and identity
+
+- Keep all secrets in Azure Key Vault and reference them in Function App settings.
+- Prefer managed identity for Azure Table and Azure OpenAI auth.
+- `local.settings.json` is for local development only and must never be committed.
+- Use `docs/deployment_checklist.md` for the full production rollout checklist in `rg-personal-finance`.
+
+## Production readiness checklist
+
+- Follow `docs/deployment_checklist.md` end-to-end for Key Vault references, RBAC, OpenAI permissions, and post-deploy validation.
+- Set an Azure budget on `rg-personal-finance` to stay under the monthly USD 150 credit envelope.
 
 ### Run with Azure Functions
 
