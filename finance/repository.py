@@ -48,9 +48,8 @@ class FinanceRepository:
 
     def _table(self, table_name: str) -> TableClient:
         service = self._get_service_client()
-        client = service.get_table_client(table_name)
-        client.create_table_if_not_exists()
-        return client
+        service.create_table_if_not_exists(table_name)
+        return service.get_table_client(table_name)
 
     def _tx_row_key(self, record: TransactionRecord) -> str:
         raw = f"{record.source}|{record.external_id}|{record.date_iso}|{record.amount_pence}|{record.merchant.lower()}"
