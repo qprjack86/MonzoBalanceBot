@@ -34,6 +34,14 @@ def _json_response(payload: dict, status_code: int = 200) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(payload), status_code=status_code, mimetype="application/json")
 
 
+def _finance_enabled() -> bool:
+    return finance_settings.finance_features_enabled
+
+
+def _finance_disabled_response() -> func.HttpResponse:
+    return _json_response({"error": "Finance features are disabled for this app."}, status_code=404)
+
+
 def _default_debt_entity() -> dict:
     entity = dict(DEFAULT_DEBT_TRACKER)
     entity["target_months"] = finance_settings.debt_target_months
@@ -107,8 +115,11 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse('{"status":"ok"}', status_code=200, mimetype="application/json")
 
 
-@app.timer_trigger(schedule="%INGEST_MONZO_SCHEDULE%", arg_name="timer", run_on_startup=False, use_monitor=True)
+@app.timer_trigger(schedule=finance_settings.ingest_monzo_schedule, arg_name="timer", run_on_startup=False, use_monitor=True)
 def ingest_monzo(timer: func.TimerRequest) -> None:
+    if not _finance_enabled():
+        logger.info("event=ingest_monzo_skipped reason=finance_disabled")
+        return
     if not settings.monzo_account_id:
         logger.error("event=ingest_monzo_missing_account_id")
         return
@@ -171,8 +182,11 @@ def ingest_monzo(timer: func.TimerRequest) -> None:
         logger.exception("event=ingest_monzo_failed")
 
 
-@app.blob_trigger(arg_name="blob", path="%CSV_UPLOAD_CONTAINER%/{name}", connection="AzureWebJobsStorage")
+@app.blob_trigger(arg_name="blob", path=f"{finance_settings.csv_upload_container}/{{name}}", connection="AzureWebJobsStorage")
 def ingest_csv(blob: func.InputStream) -> None:
+    if not _finance_enabled():
+        logger.info("event=ingest_csv_skipped reason=finance_disabled")
+        return
     blob_name = blob.name.split("/")[-1]
     try:
         finance_store.ensure_tables()
@@ -234,8 +248,11 @@ def ingest_csv(blob: func.InputStream) -> None:
         logger.exception("event=ingest_csv_failed blob=%s", blob_name)
 
 
-@app.queue_trigger(arg_name="msg", queue_name="%CATEGORISE_QUEUE_NAME%", connection="AzureWebJobsStorage")
+@app.queue_trigger(arg_name="msg", queue_name=finance_settings.categorise_queue_name, connection="AzureWebJobsStorage")
 def categorise(msg: func.QueueMessage) -> None:
+    if not _finance_enabled():
+        logger.info("event=categorise_skipped reason=finance_disabled")
+        return
     try:
         finance_store.ensure_tables()
         payload = json.loads(msg.get_body().decode("utf-8"))
@@ -263,8 +280,11 @@ def categorise(msg: func.QueueMessage) -> None:
         logger.exception("event=categorise_failed")
 
 
-@app.timer_trigger(schedule="%SWEEP_POTS_SCHEDULE%", arg_name="timer", run_on_startup=False, use_monitor=True)
+@app.timer_trigger(schedule=finance_settings.sweep_pots_schedule, arg_name="timer", run_on_startup=False, use_monitor=True)
 def sweep_pots(timer: func.TimerRequest) -> None:
+    if not _finance_enabled():
+        logger.info("event=sweep_pots_skipped reason=finance_disabled")
+        return
     if not settings.monzo_account_id or not finance_settings.monzo_spending_pot_id:
         logger.warning("event=sweep_pots_missing_configuration")
         return
@@ -290,8 +310,11 @@ def sweep_pots(timer: func.TimerRequest) -> None:
         logger.exception("event=sweep_pots_failed week_key=%s", week_key)
 
 
-@app.timer_trigger(schedule="%DEBT_TRACKER_SCHEDULE%", arg_name="timer", run_on_startup=False, use_monitor=True)
+@app.timer_trigger(schedule=finance_settings.debt_tracker_schedule, arg_name="timer", run_on_startup=False, use_monitor=True)
 def debt_tracker(timer: func.TimerRequest) -> None:
+    if not _finance_enabled():
+        logger.info("event=debt_tracker_skipped reason=finance_disabled")
+        return
     try:
         finance_store.ensure_tables()
         debt = finance_store.get_singleton(finance_settings.debt_tracker_table, "natwest", "primary") or _default_debt_entity()
@@ -319,8 +342,11 @@ def debt_tracker(timer: func.TimerRequest) -> None:
         logger.exception("event=debt_tracker_failed")
 
 
-@app.timer_trigger(schedule="%ADVICE_ENGINE_SCHEDULE%", arg_name="timer", run_on_startup=False, use_monitor=True)
+@app.timer_trigger(schedule=finance_settings.advice_engine_schedule, arg_name="timer", run_on_startup=False, use_monitor=True)
 def advice_engine(timer: func.TimerRequest) -> None:
+    if not _finance_enabled():
+        logger.info("event=advice_engine_skipped reason=finance_disabled")
+        return
     try:
         finance_store.ensure_tables()
         week_start, week_end, week_key = week_window()
@@ -361,8 +387,11 @@ def advice_engine(timer: func.TimerRequest) -> None:
         logger.exception("event=advice_engine_failed")
 
 
-@app.queue_trigger(arg_name="msg", queue_name="%ALERT_QUEUE_NAME%", connection="AzureWebJobsStorage")
+@app.queue_trigger(arg_name="msg", queue_name=finance_settings.alert_queue_name, connection="AzureWebJobsStorage")
 def alert(msg: func.QueueMessage) -> None:
+    if not _finance_enabled():
+        logger.info("event=alert_skipped reason=finance_disabled")
+        return
     try:
         payload = json.loads(msg.get_body().decode("utf-8"))
         alert_type = str(payload.get("type") or "")
@@ -407,6 +436,8 @@ def alert(msg: func.QueueMessage) -> None:
 
 @app.route(route="finance_summary", methods=["GET"])
 def finance_summary(req: func.HttpRequest) -> func.HttpResponse:
+    if not _finance_enabled():
+        return _finance_disabled_response()
     try:
         finance_store.ensure_tables()
         week_start, week_end, _ = week_window()
@@ -460,6 +491,8 @@ def finance_summary(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="finance_transactions", methods=["GET"])
 def finance_transactions(req: func.HttpRequest) -> func.HttpResponse:
+    if not _finance_enabled():
+        return _finance_disabled_response()
     try:
         finance_store.ensure_tables()
         category = req.params.get("category")
@@ -487,6 +520,8 @@ def finance_transactions(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="finance_advice", methods=["GET"])
 def finance_advice(req: func.HttpRequest) -> func.HttpResponse:
+    if not _finance_enabled():
+        return _finance_disabled_response()
     try:
         finance_store.ensure_tables()
         advice = finance_store.get_latest_advice() or {}
@@ -503,6 +538,8 @@ def finance_advice(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="finance_upload_status", methods=["GET"])
 def finance_upload_status(req: func.HttpRequest) -> func.HttpResponse:
+    if not _finance_enabled():
+        return _finance_disabled_response()
     try:
         finance_store.ensure_tables()
         uploads = finance_store.get_source_upload_status()

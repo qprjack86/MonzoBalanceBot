@@ -1,18 +1,24 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
-
-name: Build and deploy Python project to Azure Function App - monzowatchdog-js
+name: Build and deploy Python project to Azure Function App - personal-finance
 
 on:
   push:
     branches:
       - main
+    paths:
+      - function_app.py
+      - core/**
+      - stores/**
+      - scripts/**
+      - requirements*.txt
+      - host.json
+      - .github/workflows/deploy-personal-finance.yml
   workflow_dispatch:
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
   PYTHON_VERSION: '3.13'
+  FUNCTION_APP_NAME: 'personal-finance-func-prod'
+  FUNCTION_APP_RESOURCE_GROUP: 'rg-personal-finance'
   STORAGE_CONNECTION_SECRET_NAME: 'AZUREWEBJOBSSTORAGE'
   STORAGE_ACCOUNT_SECRET_NAME: 'AZUREWEBJOBSSTORAGE_ACCOUNTNAME'
 
@@ -43,14 +49,13 @@ jobs:
           pip install -r requirements.txt --target=".python_packages/lib/site-packages"
           popd
 
-      # --- FIX: Use "." to capture hidden folders like .python_packages ---
       - name: Zip artifact for deployment
         run: zip -r release.zip . -x "venv/*" ".git/*" ".github/*"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
-          name: python-app
+          name: python-app-personal-finance
           path: release.zip
 
   deploy:
@@ -64,7 +69,7 @@ jobs:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
-          name: python-app
+          name: python-app-personal-finance
 
       - name: Unzip artifact for deployment
         run: |
@@ -80,13 +85,14 @@ jobs:
 
       - name: Ensure AzureWebJobsStorage app setting exists
         env:
-          FUNCTION_APP_NAME: monzowatchdog-js
+          FUNCTION_APP_NAME: ${{ env.FUNCTION_APP_NAME }}
+          FUNCTION_APP_RESOURCE_GROUP: ${{ env.FUNCTION_APP_RESOURCE_GROUP }}
           STORAGE_CONNECTION_STRING: ${{ secrets[env.STORAGE_CONNECTION_SECRET_NAME] }}
           STORAGE_ACCOUNT_NAME: ${{ secrets[env.STORAGE_ACCOUNT_SECRET_NAME] }}
         run: |
-          resource_group=$(az functionapp list --query "[?name=='$FUNCTION_APP_NAME'].resourceGroup | [0]" -o tsv)
+          resource_group="$FUNCTION_APP_RESOURCE_GROUP"
           if [ -z "$resource_group" ]; then
-            echo "::error::Unable to find resource group for $FUNCTION_APP_NAME"
+            echo "::error::Missing FUNCTION_APP_RESOURCE_GROUP for finance deployment"
             exit 1
           fi
 
@@ -119,13 +125,27 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Neither AzureWebJobsStorage nor AzureWebJobsStorage__accountName is configured on the app, and no fallback secrets were provided (AZUREWEBJOBSSTORAGE / AZUREWEBJOBSSTORAGE_ACCOUNTNAME)."
+          echo "::error::Neither AzureWebJobsStorage nor AzureWebJobsStorage__accountName is configured on the finance app, and no fallback secrets were provided (AZUREWEBJOBSSTORAGE / AZUREWEBJOBSSTORAGE_ACCOUNTNAME)."
           exit 1
 
-      - name: 'Deploy to Azure Functions'
+      - name: Enable finance feature flag and defaults
+        env:
+          FUNCTION_APP_NAME: ${{ env.FUNCTION_APP_NAME }}
+          FUNCTION_APP_RESOURCE_GROUP: ${{ env.FUNCTION_APP_RESOURCE_GROUP }}
+        run: |
+          az functionapp config appsettings set \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$FUNCTION_APP_RESOURCE_GROUP" \
+            --settings \
+              FINANCE_FEATURES_ENABLED=true \
+              CSV_UPLOAD_CONTAINER=finance-uploads \
+              CATEGORISE_QUEUE_NAME=categorise \
+              ALERT_QUEUE_NAME=alerts
+
+      - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         id: deploy-to-function
         with:
-          app-name: 'monzowatchdog-js'
+          app-name: ${{ env.FUNCTION_APP_NAME }}
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}

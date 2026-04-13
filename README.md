@@ -49,6 +49,11 @@ This repository now includes a personal finance tracker extension:
   - `/api/finance_upload_status`
 - Setup script to provision/seed finance tables: `scripts/setup_finance_tables.py`
 
+Important deployment safety rule:
+
+- Finance features are disabled by default unless `FINANCE_FEATURES_ENABLED=true` is set.
+- The existing Monzo watchdog app can keep running the same codebase without activating finance timers, queue triggers, blob processing, or finance HTTP endpoints.
+
 Seeded categories include: eating out, groceries, subscriptions, gambling, coffee, shopping, transport, transfers, personal care (unknown merchants default to `uncategorised`).
 
 ## Architecture
@@ -93,6 +98,7 @@ Set these as Function App settings (or in `local.settings.json` when running loc
 | Variable | Required | Description | Default |
 |---|---|---|---|
 | `TRANSACTIONS_TABLE` | No | Transaction storage table | `Transactions` |
+| `FINANCE_FEATURES_ENABLED` | No | Enable finance tracker triggers and HTTP endpoints | `false` |
 | `CATEGORIES_TABLE` | No | Merchant-category mappings | `Categories` |
 | `BUDGET_TARGETS_TABLE` | No | Budget targets table | `BudgetTargets` |
 | `DEBT_TRACKER_TABLE` | No | Debt tracking table | `DebtTracker` |
@@ -225,6 +231,16 @@ func azure functionapp publish <YOUR_APP_NAME>
 Webhook URL:
 - `https://<YOUR_APP_NAME>.azurewebsites.net/api/monzo_webhook`
 
+### Separate finance Function App
+
+To avoid disrupting the existing production watchdog app:
+
+- keep `.github/workflows/main_monzowatchdog-js.yml` for the existing Function App
+- use `.github/workflows/deploy-personal-finance.yml` for the new finance Function App in `rg-personal-finance`
+- set `FINANCE_FEATURES_ENABLED=true` only on the new finance Function App
+
+If `FINANCE_FEATURES_ENABLED` is not set, all finance triggers no-op and finance HTTP endpoints return a disabled response.
+
 ### Azure Static Web App
 
 Set GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN` and push changes under `staticwebapp/`.
@@ -263,6 +279,7 @@ Recommended Azure layout for this project:
 - Function App + Storage Account + Queue/Table/Blob in same subscription
 - Key Vault with Managed Identity references for secrets
 - Azure Static Web App (Free tier) for dashboard
+- Existing watchdog Function App left unchanged and separate from finance deployment
 
 ## Getting a refresh token (one-time helper)
 

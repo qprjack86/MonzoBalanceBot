@@ -19,8 +19,16 @@ def _env_int(*keys: str, default: int) -> int:
     return int(str(value).strip())
 
 
+def _env_bool(*keys: str, default: bool = False) -> bool:
+    value = _get_env(*keys)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 @dataclass(frozen=True)
 class FinanceSettings:
+    finance_features_enabled: bool
     transactions_table: str
     categories_table: str
     budget_targets_table: str
@@ -49,6 +57,7 @@ class FinanceSettings:
 
 def load_finance_settings() -> FinanceSettings:
     return FinanceSettings(
+        finance_features_enabled=_env_bool("FINANCE_FEATURES_ENABLED", default=False),
         transactions_table=str(_get_env("TRANSACTIONS_TABLE", default="Transactions")),
         categories_table=str(_get_env("CATEGORIES_TABLE", default="Categories")),
         budget_targets_table=str(_get_env("BUDGET_TARGETS_TABLE", default="BudgetTargets")),
