@@ -87,7 +87,7 @@ def load_settings() -> Settings:
         categorise_queue_name=str(_get_env("CATEGORISE_QUEUE_NAME", default="categorise-jobs")),
         alert_queue_name=str(_get_env("ALERT_QUEUE_NAME", default="finance-alerts")),
         csv_uploads_container=str(_get_env("CSV_UPLOADS_CONTAINER", default="csv-uploads")),
-        monzo_spending_pot_id=_get_env("MONZO_SPENDING_POT_ID"),
+        monzo_spending_pot_id=_get_env("MONZO_SPENDING_POT_ID", "MONZOSPENDINGPOTID"),
         weekly_sweep_amount_pence=int(_get_env("WEEKLY_SWEEP_AMOUNT_PENCE", default=10700)),
         weekly_discretionary_target_pence=int(_get_env("WEEKLY_DISCRETIONARY_TARGET_PENCE", default=10700)),
         debt_target_months=int(_get_env("DEBT_TARGET_MONTHS", default=36)),
