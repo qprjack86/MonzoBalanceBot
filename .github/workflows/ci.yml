@@ -20,7 +20,7 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run full test discovery
         run: |
-          python -m unittest discover -s tests -p "test_*.py" -v | tee /tmp/unittest-discovery.log
+          python -m unittest discover -s tests -p "test_*.py" -v 2>&1 | tee /tmp/unittest-discovery.log
       - name: Enforce minimum discovered tests
         run: |
           python - <<'PY'
