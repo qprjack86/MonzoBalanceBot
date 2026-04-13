@@ -238,7 +238,9 @@ class FinanceRepository:
         table = self._table(self.settings.transactions_table_name)
         latest_balance: Optional[int] = None
         latest_date = ""
-        for entity in table.list_entities(query_filter=f"PartitionKey eq '{source}'"):
+        for entity in table.list_entities():
+            if str(entity.get("PartitionKey", "")) != source:
+                continue
             metadata_text = str(entity.get("metadata_json", "") or "{}")
             try:
                 metadata = json.loads(metadata_text)
@@ -286,7 +288,7 @@ class FinanceRepository:
 
     def get_latest_advice(self) -> Optional[dict[str, Any]]:
         table = self._table("AdviceHistory")
-        entities = list(table.list_entities(query_filter="PartitionKey eq 'advice'"))
+        entities = [entity for entity in table.list_entities() if str(entity.get("PartitionKey", "")) == "advice"]
         if not entities:
             return None
         entities.sort(key=lambda item: str(item.get("week_start_iso", "")), reverse=True)
@@ -294,7 +296,11 @@ class FinanceRepository:
 
     def get_last_upload(self, source: str) -> Optional[dict[str, Any]]:
         table = self._table(self.settings.upload_state_table_name)
-        entities = [entity for entity in table.list_entities(query_filter="PartitionKey eq 'upload'") if str(entity.get("source", "")) == source]
+        entities = [
+            entity
+            for entity in table.list_entities()
+            if str(entity.get("PartitionKey", "")) == "upload" and str(entity.get("source", "")) == source
+        ]
         if not entities:
             return None
         entities.sort(key=lambda item: str(item.get("processed_at", "")), reverse=True)
@@ -317,7 +323,7 @@ class FinanceRepository:
 
     def get_latest_sweep(self) -> Optional[dict[str, Any]]:
         table = self._table("Sweeps")
-        entities = list(table.list_entities(query_filter="PartitionKey eq 'sweep'"))
+        entities = [entity for entity in table.list_entities() if str(entity.get("PartitionKey", "")) == "sweep"]
         if not entities:
             return None
         entities.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)

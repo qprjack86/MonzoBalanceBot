@@ -85,13 +85,16 @@ def _get_pot_balance_pence() -> int | None:
     if not account_id or not pot_id:
         return None
 
-    access_token = service.get_monzo_access_token()
-    response = monzo_client.list_pots(access_token, account_id)
-    response.raise_for_status()
-    pots = response.json().get("pots", [])
-    for pot in pots:
-        if str(pot.get("id")) == pot_id:
-            return int(pot.get("balance", 0) or 0)
+    try:
+        access_token = service.get_monzo_access_token()
+        response = monzo_client.list_pots(access_token, account_id)
+        response.raise_for_status()
+        pots = response.json().get("pots", [])
+        for pot in pots:
+            if str(pot.get("id")) == pot_id:
+                return int(pot.get("balance", 0) or 0)
+    except Exception as exc:
+        logger.warning("event=pot_balance_lookup_failed error=%s", exc)
     return None
 
 
