@@ -6,6 +6,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import azure.functions as func
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient
 
 from finance.constants import CATEGORY_UNCATEGORISED, KNOWN_MERCHANT_CATEGORY_MAP
 from finance.csv_ingest import file_sha256, parse_csv_transactions
@@ -501,3 +503,45 @@ def dashboard_transactions(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     return _json_response({"transactions": payload})
+
+
+@app.route(route="upload_csv", methods=["POST"])
+def upload_csv(req: func.HttpRequest) -> func.HttpResponse:
+    """Accept a CSV file upload from the dashboard and write it to blob storage.
+
+    The existing ingest_csv blob trigger will fire automatically once the blob lands.
+    """
+    body = req.get_body()
+    if not body:
+        return func.HttpResponse(
+            json.dumps({"error": "empty body"}, ensure_ascii=True),
+            status_code=400,
+            mimetype="application/json",
+        )
+
+    # Derive a safe filename: prefer Content-Disposition header, fall back to UUID
+    content_disposition = req.headers.get("Content-Disposition", "")
+    filename = None
+    for part in content_disposition.split(";"):
+        part = part.strip()
+        if part.startswith("filename="):
+            filename = part[len("filename="):].strip().strip('"')
+            break
+    if not filename:
+        filename = f"upload-{uuid.uuid4()}.csv"
+
+    table_uri = os.environ.get("AzureWebJobsStorage__tableServiceUri", "")
+    if table_uri:
+        # Managed-identity path: derive blob endpoint from table endpoint
+        blob_endpoint = table_uri.replace(".table.", ".blob.")
+        blob_service = BlobServiceClient(account_url=blob_endpoint, credential=DefaultAzureCredential())
+    else:
+        conn_str = os.environ.get("AzureWebJobsStorage", "")
+        blob_service = BlobServiceClient.from_connection_string(conn_str)
+
+    container_name = os.environ.get("CSV_UPLOADS_CONTAINER", "csv-uploads")
+    blob_client = blob_service.get_blob_client(container=container_name, blob=filename)
+    blob_client.upload_blob(body, overwrite=True)
+
+    logger.info("event=upload_csv_received filename=%s bytes=%s", filename, len(body))
+    return _json_response({"status": "queued", "filename": filename})

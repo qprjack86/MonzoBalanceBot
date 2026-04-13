@@ -87,4 +87,43 @@ async function refreshAll() {
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("categoryFilter").addEventListener("change", loadTransactions);
 
+// CSV upload
+async function uploadFile(file) {
+  const statusEl = document.getElementById("uploadStatus");
+  statusEl.textContent = `Uploading ${file.name}…`;
+  try {
+    const resp = await fetch(`${API_BASE}/upload_csv`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="${file.name}"`,
+      },
+      body: file,
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    statusEl.textContent = `✓ ${file.name} uploaded — transactions will appear within a minute.`;
+  } catch (err) {
+    statusEl.textContent = `✗ Upload failed: ${err.message}`;
+  }
+}
+
+const csvInput = document.getElementById("csvInput");
+const uploadArea = document.getElementById("uploadArea");
+
+csvInput.addEventListener("change", async () => {
+  for (const file of csvInput.files) await uploadFile(file);
+  csvInput.value = "";
+});
+
+uploadArea.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  uploadArea.classList.add("drag-over");
+});
+uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("drag-over"));
+uploadArea.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  uploadArea.classList.remove("drag-over");
+  for (const file of e.dataTransfer.files) await uploadFile(file);
+});
+
 refreshAll();

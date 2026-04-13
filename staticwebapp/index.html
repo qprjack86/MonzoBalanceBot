@@ -56,6 +56,16 @@
     </section>
 
     <section class="card reveal">
+      <h2>Upload CSV</h2>
+      <p class="meta">Export your NatWest or PayPal statement as CSV and drop it here.</p>
+      <div class="upload-area" id="uploadArea">
+        <input type="file" id="csvInput" accept=".csv" multiple>
+        <label for="csvInput" class="upload-label">Choose CSV file(s) or drag &amp; drop</label>
+      </div>
+      <p class="meta" id="uploadStatus"></p>
+    </section>
+
+    <section class="card reveal">
       <div class="table-head">
         <h2>Recent Transactions</h2>
         <select id="categoryFilter">

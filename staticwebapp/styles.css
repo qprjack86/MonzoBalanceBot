@@ -153,6 +153,32 @@ select {
   gap: 0.45rem;
 }
 
+/* CSV upload */
+.upload-area {
+  margin-top: 0.75rem;
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  padding: 1.25rem;
+  text-align: center;
+  transition: border-color 0.2s;
+}
+.upload-area.drag-over {
+  border-color: var(--teal);
+  background: #f0fdf4;
+}
+.upload-area input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.upload-label {
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--teal);
+  font-weight: 500;
+}
+
 .tx {
   border: 1px solid var(--line);
   border-radius: 12px;
