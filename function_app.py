@@ -545,3 +545,34 @@ def upload_csv(req: func.HttpRequest) -> func.HttpResponse:
 
     logger.info("event=upload_csv_received filename=%s bytes=%s", filename, len(body))
     return _json_response({"status": "queued", "filename": filename})
+
+
+@app.route(route="debug/pots", methods=["GET"])
+def debug_pots(req: func.HttpRequest) -> func.HttpResponse:
+    """Temporary diagnostic endpoint — lists all active Monzo pots with their balances."""
+    configured_pot_id = settings.monzo_spending_pot_id or ""
+    account_id = settings.monzo_account_id
+    try:
+        access_token = service.get_monzo_access_token()
+        response = monzo_client.list_pots(access_token, account_id)
+        response.raise_for_status()
+        pots = [
+            {
+                "id": p.get("id"),
+                "name": p.get("name"),
+                "balance_pence": p.get("balance"),
+                "balance_gbp": round((p.get("balance") or 0) / 100, 2),
+                "deleted": p.get("deleted", False),
+                "is_configured": str(p.get("id")) == configured_pot_id,
+            }
+            for p in response.json().get("pots", [])
+            if not p.get("deleted")
+        ]
+    except Exception as exc:
+        return _json_response({"error": str(exc), "configured_pot_id": configured_pot_id})
+
+    return _json_response({
+        "configured_pot_id": configured_pot_id,
+        "account_id": account_id,
+        "pots": pots,
+    })
