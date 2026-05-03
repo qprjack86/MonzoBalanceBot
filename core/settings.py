@@ -93,7 +93,4 @@ def load_settings() -> Settings:
         debt_target_months=int(_get_env("DEBT_TARGET_MONTHS", default=36)),
         debt_monthly_payment_target_pence=int(_get_env("DEBT_MONTHLY_PAYMENT_TARGET_PENCE", default=9300)),
         emergency_fund_target_pence=int(_get_env("EMERGENCY_FUND_TARGET_PENCE", default=720000)),
-        azure_openai_endpoint=_get_env("AZURE_OPENAI_ENDPOINT"),
-        azure_openai_api_version=str(_get_env("AZURE_OPENAI_API_VERSION", default="2024-10-21")),
-        azure_openai_deployment=_get_env("AZURE_OPENAI_DEPLOYMENT"),
     )
