@@ -1,6 +1,5 @@
 import logging
 import json
-import math
 import os
 import urllib.request
 import uuid
@@ -225,35 +224,6 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
     logger.info("event=ingest_monzo_complete inserted=%s total=%s", inserted, len(transactions))
 
 
-# ── Debt tracking ─────────────────────────────────────────────────────────
-
-@app.timer_trigger(schedule="0 5 0 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
-def debt_tracker(timer: func.TimerRequest) -> None:
-    """Daily: update debt progress from latest balance metadata."""
-    del timer
-    current = finance_repo.get_debt_tracker() or {}
-    latest_natwest_balance = finance_repo.latest_source_balance_from_metadata("natwest")
-    current_balance = int(
-        latest_natwest_balance
-        if latest_natwest_balance is not None
-        else current.get("current_balance_pence", 331900)
-    )
-    monthly_target = int(current.get("monthly_payment_target_pence", settings.debt_monthly_payment_target_pence))
-    target_months = int(current.get("target_months", settings.debt_target_months))
-    months_remaining = math.ceil(current_balance / monthly_target) if monthly_target > 0 else target_months
-    on_track = months_remaining <= target_months
-
-    finance_repo.upsert_debt_tracker({
-        "name": "natwest_card",
-        "current_balance_pence": current_balance,
-        "monthly_payment_target_pence": monthly_target,
-        "target_months": target_months,
-        "months_remaining": months_remaining,
-        "on_track": on_track,
-    })
-    logger.info("event=debt_tracker_complete balance=%s months_remaining=%s", current_balance, months_remaining)
-
-
 # ── Advice engine (replaced — posts to Jarvis) ────────────────────────────
 
 @app.timer_trigger(schedule="0 0 7 * * 1", arg_name="timer", run_on_startup=False, use_monitor=True)
@@ -270,10 +240,7 @@ def advice_engine(timer: func.TimerRequest) -> None:
     breakdown = finance_repo.weekly_spend_breakdown(week_start_iso, week_end.isoformat())
     overspend_categories = [k for k, _ in sorted(breakdown.items(), key=lambda item: item[1], reverse=True)[:3]]
 
-    debt = finance_repo.get_debt_tracker() or {}
-    natwest_balance = int(debt.get("current_balance_pence", 331900))
-    months_remaining = int(debt.get("months_remaining", settings.debt_target_months))
-    on_track = bool(debt.get("on_track", False))
+    # MBNA 0% balance transfer: £3,319 at £93/month, clears April 2029
 
     emergency = finance_repo.get_emergency_fund() or {}
     emergency_current = int(emergency.get("current_balance_pence", 0))
@@ -290,9 +257,8 @@ def advice_engine(timer: func.TimerRequest) -> None:
             "weekly_spend_pence": weekly_spend,
             "weekly_target_pence": weekly_target,
             "overspend_categories": overspend_categories,
-            "debt_balance_pence": natwest_balance,
-            "debt_months_remaining": months_remaining,
-            "debt_on_track": on_track,
+            "debt_balance_pence": 331900,
+            "debt_monthly_payment_pence": 9300,
             "emergency_fund_pence": emergency_current,
             "emergency_fund_target_pence": emergency_target,
             "pot_balance_pence": pot_balance,
@@ -359,10 +325,8 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
     weekly_spend = finance_repo.weekly_spend_pence(week_start_iso, week_end.isoformat())
     weekly_target = _weekly_target_pence()
 
-    debt = finance_repo.get_debt_tracker() or {}
-    debt_balance = int(debt.get("current_balance_pence", 331900))
-    debt_start = 331900
-    debt_progress = 0 if debt_start <= 0 else max(0.0, min(1.0, (debt_start - debt_balance) / debt_start))
+    # MBNA £3,319 at £93/month — clears April 2029
+    debt_balance = 331900
 
     emergency = finance_repo.get_emergency_fund() or {}
     emergency_current = int(emergency.get("current_balance_pence", 0))
@@ -378,10 +342,8 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
         "weekly_progress": min(1.0, weekly_spend / weekly_target) if weekly_target > 0 else 0,
         "debt": {
             "current_balance_pence": debt_balance,
-            "months_remaining": int(debt.get("months_remaining", settings.debt_target_months)),
-            "target_months": int(debt.get("target_months", settings.debt_target_months)),
-            "on_track": bool(debt.get("on_track", False)),
-            "progress": debt_progress,
+            "monthly_payment_pence": 9300,
+            "target_balance_pence": 0,
         },
         "emergency_fund": {
             "current_balance_pence": emergency_current,
