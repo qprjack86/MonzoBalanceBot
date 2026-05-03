@@ -2,4 +2,3 @@
 azure-functions
 azure-data-tables
 azure-identity
-azure-storage-blob
