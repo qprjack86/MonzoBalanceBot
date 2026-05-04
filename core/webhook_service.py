@@ -55,6 +55,21 @@ class WebhookService:
 
             try:
                 self.check_and_alert(tx, cid)
+                # Real-time large transaction notification via Monzo feed
+                tx_amount = tx.get("amount", 0)
+                if abs(tx_amount) >= 10000:
+                    merchant = tx.get("merchant", {}).get("name") if tx.get("merchant") else tx.get("description", "Unknown")
+                    direction = "Spent" if tx_amount < 0 else "Received"
+                    access_token = self.get_monzo_access_token()
+                    self.monzo_client.post_feed(
+                        access_token,
+                        self.settings.monzo_account_id or "",
+                        click_url=self.build_transaction_click_url(tx_id),
+                        title=f"Large {direction}: £{abs(tx_amount)/100:.2f} at {merchant}",
+                        body="Transaction over £100.",
+                        color="#E67E22",
+                    )
+                    logger.info("event=webhook_large_tx cid=%s amount=%s", cid, tx_amount)
             except Exception as exc:
                 logger.exception("event=webhook_logic_error cid=%s error=%s", cid, exc)
                 return WebhookResult(200, "Error processed")
