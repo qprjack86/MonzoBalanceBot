@@ -312,6 +312,16 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
         }, ensure_ascii=True))
         finance_repo.set_sync_cursor(overspend_key, datetime.now(UTC).isoformat())
 
+    # Low weekly pot balance check (< £50)
+    pot_balance = _get_pot_balance_pence()
+    low_pot_key = f"low_pot_alert:{datetime.now(UTC).strftime('%Y-%m-%d')}"
+    if pot_balance is not None and pot_balance < 5000 and not finance_repo.get_sync_cursor(low_pot_key):
+        alert_queue.set(json.dumps({
+            "type": "low_weekly_pot_balance",
+            "pot_balance_pence": pot_balance,
+        }, ensure_ascii=True))
+        finance_repo.set_sync_cursor(low_pot_key, datetime.now(UTC).isoformat())
+
     logger.info("event=ingest_monzo_complete inserted=%s total=%s", inserted, len(transactions))
 
 
@@ -400,6 +410,21 @@ def alert(msg: func.QueueMessage) -> None:
             "balance_pence": balance_pence,
         })
         logger.info("event=alert_low_balance_sent balance=%s", balance_pence)
+        return
+
+    if event_type == "low_weekly_pot_balance":
+        pot_balance = int(payload.get("pot_balance_pence", 0))
+        _send_feed_message(
+            title=f"Weekly pot low: {_currency(pot_balance)}",
+            body="Your weekly discretionary pot has dropped below £50.",
+            color="#E74C3C",
+        )
+        _notify_jarvis({
+            "action": "alert",
+            "type": "low_weekly_pot_balance",
+            "pot_balance_pence": pot_balance,
+        })
+        logger.info("event=alert_low_weekly_pot_sent balance=%s", pot_balance)
         return
 
     logger.warning("event=alert_unknown_type payload=%s", body)
