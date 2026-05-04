@@ -322,6 +322,25 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
         }, ensure_ascii=True))
         finance_repo.set_sync_cursor(low_pot_key, datetime.now(UTC).isoformat())
 
+    # Low balance before bills check (runs around 23rd-24th of each month)
+    now = datetime.now(UTC)
+    if 23 <= now.day <= 24:
+        bills_key = f"low_balance_before_bills:{now.year}-{now.month}"
+        if not finance_repo.get_sync_cursor(bills_key):
+            try:
+                access_token = service.get_monzo_access_token()
+                balance_resp = monzo_client.get_balance(access_token, account_id)
+                if balance_resp.ok:
+                    balance = balance_resp.json().get("balance", 0)
+                    if balance < 20000:  # £200 threshold
+                        alert_queue.set(json.dumps({
+                            "type": "low_balance_before_bills",
+                            "balance_pence": balance,
+                        }, ensure_ascii=True))
+                        finance_repo.set_sync_cursor(bills_key, datetime.now(UTC).isoformat())
+            except Exception as exc:
+                logger.warning("event=bills_balance_check_failed error=%s", exc)
+
     logger.info("event=ingest_monzo_complete inserted=%s total=%s", inserted, len(transactions))
 
 
@@ -425,6 +444,39 @@ def alert(msg: func.QueueMessage) -> None:
             "pot_balance_pence": pot_balance,
         })
         logger.info("event=alert_low_weekly_pot_sent balance=%s", pot_balance)
+        return
+
+    if event_type == "large_transaction":
+        amount = int(payload.get("amount_pence", 0))
+        merchant = payload.get("merchant", "Unknown")
+        direction = "Spent" if amount < 0 else "Received"
+        _send_feed_message(
+            title=f"Large {direction}: {_currency(abs(amount))} at {merchant}",
+            body="Transaction over £100.",
+            color="#E67E22",
+        )
+        _notify_jarvis({
+            "action": "alert",
+            "type": "large_transaction",
+            "amount_pence": amount,
+            "merchant": merchant,
+        })
+        logger.info("event=alert_large_transaction_sent amount=%s merchant=%s", amount, merchant)
+        return
+
+    if event_type == "low_balance_before_bills":
+        balance_pence = int(payload.get("balance_pence", 0))
+        _send_feed_message(
+            title=f"Bills season check: {_currency(balance_pence)}",
+            body=f"Direct debits coming up (25th-2nd) and your balance is only {_currency(balance_pence)}. Consider moving funds in.",
+            color="#E67E22",
+        )
+        _notify_jarvis({
+            "action": "alert",
+            "type": "low_balance_before_bills",
+            "balance_pence": balance_pence,
+        })
+        logger.info("event=alert_bills_low_balance balance=%s", balance_pence)
         return
 
     logger.warning("event=alert_unknown_type payload=%s", body)
