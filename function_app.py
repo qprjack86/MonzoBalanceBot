@@ -322,9 +322,9 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
         }, ensure_ascii=True))
         finance_repo.set_sync_cursor(low_pot_key, datetime.now(UTC).isoformat())
 
-    # Low balance before bills check (runs around 23rd-24th of each month)
+    # Low balance before bills check (runs after payday on 25th, before bills 1st-3rd)
     now = datetime.now(UTC)
-    if 23 <= now.day <= 24:
+    if 26 <= now.day <= 31:
         bills_key = f"low_balance_before_bills:{now.year}-{now.month}"
         if not finance_repo.get_sync_cursor(bills_key):
             try:
