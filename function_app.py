@@ -1,11 +1,14 @@
 import logging
 import json
 import os
+import secrets
+import time
 import urllib.request
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import azure.functions as func
+import requests
 
 from finance.constants import KNOWN_MERCHANT_CATEGORY_MAP
 from finance.repository import FinanceRepository, TransactionRecord
@@ -13,6 +16,7 @@ from core.monzo_client import MonzoClient, build_session
 from core.settings import load_settings
 from core.webhook_service import WebhookService
 from stores.factory import build_state_store
+from stores.interfaces import TokenState
 
 
 logger = logging.getLogger(__name__)
@@ -151,6 +155,93 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="health", methods=["GET"])
 def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse('{"status":"ok"}', status_code=200, mimetype="application/json")
+
+
+# ── OAuth callback ─────────────────────────────────────────────────────────
+
+MONZO_AUTH_URL = "https://auth.monzo.com"
+MONZO_API_URL = "https://api.monzo.com"
+
+# IMPORTANT: Register this exact redirect URI in the Monzo developer console.
+# If your function app name differs, update this before generating the auth URL.
+OAUTH_REDIRECT_URI = os.getenv("MONZO_OAUTH_REDIRECT_URI", "https://monzowatchdog-js.azurewebsites.net/api/oauth_callback")
+
+
+@app.route(route="oauth_callback", methods=["GET"])
+def oauth_callback(req: func.HttpRequest) -> func.HttpResponse:
+    """Handle Monzo OAuth redirect: exchange code for tokens and persist to Azure Table Storage."""
+    code = req.params.get("code")
+    state = req.params.get("state")
+    error = req.params.get("error")
+    error_desc = req.params.get("error_description", "")
+
+    if error:
+        logger.error("event=oauth_callback_error error=%s description=%s", error, error_desc)
+        return func.HttpResponse(f"Monzo authorization error: {error} – {error_desc}", status_code=400)
+
+    if not code:
+        return func.HttpResponse("Missing authorization code.", status_code=400)
+
+    if not settings.monzo_client_id or not settings.monzo_client_secret:
+        logger.error("event=oauth_callback_missing_credentials")
+        return func.HttpResponse("Server misconfiguration: missing Monzo client credentials.", status_code=500)
+
+    logger.info("event=oauth_callback_received code_present=true")
+
+    try:
+        resp = requests.post(
+            f"{MONZO_API_URL}/oauth2/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": settings.monzo_client_id,
+                "client_secret": settings.monzo_client_secret,
+                "redirect_uri": OAUTH_REDIRECT_URI,
+                "code": code,
+            },
+            timeout=(5, 15),
+        )
+    except requests.RequestException as exc:
+        logger.exception("event=oauth_token_exchange_failed error=%s", exc)
+        return func.HttpResponse(f"Token exchange request failed: {exc}", status_code=502)
+
+    if resp.status_code != 200:
+        logger.error("event=oauth_token_exchange_failed status=%s body=%s", resp.status_code, resp.text)
+        return func.HttpResponse(f"Token exchange failed ({resp.status_code}): {resp.text}", status_code=502)
+
+    data = resp.json()
+    refresh_token = data.get("refresh_token")
+    access_token = data.get("access_token")
+    expires_in = data.get("expires_in", 21600)
+
+    if not refresh_token:
+        logger.error("event=oauth_no_refresh_token response_keys=%s", list(data.keys()))
+        return func.HttpResponse("No refresh_token in Monzo response.", status_code=502)
+
+    # Persist to Azure Table Storage
+    new_state = TokenState(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expiry_ts=time.time() + expires_in - 120,
+    )
+    try:
+        store.save_token_state(new_state)
+        logger.info("event=oauth_token_saved expiry_ts=%s", new_state.expiry_ts)
+    except Exception as exc:
+        logger.exception("event=oauth_token_save_failed error=%s", exc)
+        return func.HttpResponse(f"Token received but failed to save: {exc}", status_code=500)
+
+    masked = f"{refresh_token[:6]}...{refresh_token[-4:]}"
+    logger.info("event=oauth_success refresh_token_masked=%s", masked)
+
+    html = (
+        "<html><body style='font-family:sans-serif;max-width:600px;margin:40px auto;'>"
+        "<h1>✅ Monzo connected</h1>"
+        "<p>Your refresh token has been saved to Azure Table Storage.</p>"
+        f"<p><code>{masked}</code></p>"
+        "<p>You can close this tab.</p>"
+        "</body></html>"
+    )
+    return func.HttpResponse(html, status_code=200, mimetype="text/html")
 
 
 # ── Data ingestion ─────────────────────────────────────────────────────────
