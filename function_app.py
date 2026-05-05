@@ -636,6 +636,83 @@ def weekly_topup(timer: func.TimerRequest | None = None) -> None:
         logger.exception("event=weekly_topup_error error=%s", exc)
 
 
+# ── Payday discretionary sweep ────────────────────────────────────────────
+
+@app.timer_trigger(schedule="0 6 22-25 * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+def payday_topup(timer: func.TimerRequest) -> None:
+    """On payday (25th or last working day before): transfer £428 to monthly discretionary pot."""
+    del timer
+
+    account_id = settings.monzo_account_id
+    monthly_pot_id = settings.monzo_monthly_pot_id
+
+    if not account_id or not monthly_pot_id:
+        logger.warning("event=payday_topup_skipped missing settings")
+        return
+
+    try:
+        today = datetime.now(UTC)
+
+        # Determine effective payday for this month
+        def _effective_payday(y: int, m: int) -> datetime:
+            from datetime import timedelta
+            d = datetime(y, m, 25, tzinfo=UTC)
+            # Move back if weekend
+            while d.weekday() >= 5:
+                d -= timedelta(days=1)
+            # Move back if bank holiday (May last Monday = 25 May 2026, which is BH)
+            # Simple check: if 25th is a Monday and month is May, it's the Spring BH
+            if d.month == 5 and d.weekday() == 0 and d.day == 25:
+                d -= timedelta(days=3)  # Friday before
+            return d
+
+        payday = _effective_payday(today.year, today.month)
+
+        # Only act on the actual payday
+        if today.date() != payday.date():
+            logger.info("event=payday_topup_waiting today=%s payday=%s", today.date(), payday.date())
+            return
+
+        # Check if already done this pay period
+        payday_key = f"payday_topup:{payday.strftime('%Y-%m')}"
+        if finance_repo.get_sync_cursor(payday_key):
+            logger.info("event=payday_topup_already_done period=%s", payday_key)
+            return
+
+        access_token = service.get_monzo_access_token()
+
+        # Transfer £428 to monthly discretionary pot
+        amount_pence = 42800
+        dedupe_id = str(uuid.uuid4())
+        deposit_resp = monzo_client.deposit_into_pot(
+            access_token, monthly_pot_id, account_id, amount_pence, dedupe_id
+        )
+
+        if not deposit_resp.ok:
+            logger.error("event=payday_topup_deposit_failed status=%s body=%s", deposit_resp.status_code, deposit_resp.text)
+            return
+
+        # Record completion
+        finance_repo.set_sync_cursor(payday_key, datetime.now(UTC).isoformat())
+
+        _send_feed_message(
+            title="£428 discretionary money in",
+            body=f"Monthly discretionary pot topped up. Payday £{amount_pence/100:.0f} transferred.",
+        )
+
+        _notify_jarvis({
+            "action": "payday_topup",
+            "status": "completed",
+            "amount_pence": amount_pence,
+            "payday": payday.isoformat(),
+        })
+
+        logger.info("event=payday_topup_completed payday=%s", payday.date())
+
+    except Exception as exc:
+        logger.exception("event=payday_topup_error error=%s", exc)
+
+
 # ── Alert handler ─────────────────────────────────────────────────────────
 
 @app.queue_trigger(arg_name="msg", queue_name="%ALERT_QUEUE_NAME%", connection="AzureWebJobsStorage")
