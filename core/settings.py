@@ -48,6 +48,9 @@ class Settings:
     alert_queue_name: str = "finance-alerts"
     csv_uploads_container: str = "csv-uploads"
     monzo_spending_pot_id: str | None = None
+    monzo_savings_pot_id: str | None = None
+    monzo_monthly_pot_id: str | None = None
+    monzo_sweep_float_pence: int = 5000
     weekly_sweep_amount_pence: int = 10700
     weekly_discretionary_target_pence: int = 10700
     debt_target_months: int = 36
@@ -88,6 +91,9 @@ def load_settings() -> Settings:
         alert_queue_name=str(_get_env("ALERT_QUEUE_NAME", default="finance-alerts")),
         csv_uploads_container=str(_get_env("CSV_UPLOADS_CONTAINER", default="csv-uploads")),
         monzo_spending_pot_id=_get_env("MONZO_SPENDING_POT_ID", "MONZOSPENDINGPOTID"),
+        monzo_savings_pot_id=_get_env("MONZO_SAVINGS_POT_ID", "MONZOSAVINGSPOTID"),
+        monzo_monthly_pot_id=_get_env("MONZO_MONTHLY_POT_ID", "MONZOMONTHLYPOTID"),
+        monzo_sweep_float_pence=int(_get_env("MONZO_SWEEP_FLOAT_PENCE", default=5000)),
         weekly_sweep_amount_pence=int(_get_env("WEEKLY_SWEEP_AMOUNT_PENCE", default=10700)),
         weekly_discretionary_target_pence=int(_get_env("WEEKLY_DISCRETIONARY_TARGET_PENCE", default=10700)),
         debt_target_months=int(_get_env("DEBT_TARGET_MONTHS", default=36)),

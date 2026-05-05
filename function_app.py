@@ -389,6 +389,250 @@ def advice_engine(timer: func.TimerRequest) -> None:
     logger.info("event=advice_engine_posted week_start=%s", week_start_iso)
 
 
+# ── Monthly bills sweep ───────────────────────────────────────────────────
+
+@app.timer_trigger(schedule="0 6 19 * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+def bills_sweep(timer: func.TimerRequest) -> None:
+    """After the 18th: sweep excess balance (above £50 float) to savings pot."""
+    del timer
+
+    account_id = settings.monzo_account_id
+    savings_pot_id = settings.monzo_savings_pot_id
+    if not account_id or not savings_pot_id:
+        logger.warning("event=bills_sweep_skipped missing settings")
+        return
+
+    try:
+        access_token = service.get_monzo_access_token()
+
+        # Get current balance
+        balance_resp = monzo_client.get_balance(access_token, account_id)
+        if not balance_resp.ok:
+            logger.warning("event=bills_sweep_balance_failed status=%s", balance_resp.status_code)
+            return
+
+        balance_data = balance_resp.json()
+        balance_pence = int(balance_data.get("balance", 0) or 0)
+        float_pence = settings.monzo_sweep_float_pence
+
+        sweep_amount = max(0, balance_pence - float_pence)
+        if sweep_amount < 100:
+            _send_feed_message(
+                title="Bills sweep: nothing to move",
+                body=f"Balance of {_currency(balance_pence)} is below £{float_pence/100:.0f} float threshold. Skipping.",
+                color="#3498DB",
+            )
+            logger.info("event=bills_sweep_skipped balance=%s threshold=%s", balance_pence, float_pence)
+            _notify_jarvis({
+                "action": "bills_sweep",
+                "status": "skipped",
+                "balance_pence": balance_pence,
+                "float_pence": float_pence,
+                "sweep_amount_pence": 0,
+            })
+            return
+
+        # Sweep to savings pot
+        dedupe_id = str(uuid.uuid4())
+        deposit_resp = monzo_client.deposit_into_pot(
+            access_token, savings_pot_id, account_id, sweep_amount, dedupe_id
+        )
+        if not deposit_resp.ok:
+            logger.error("event=bills_sweep_deposit_failed status=%s body=%s", deposit_resp.status_code, deposit_resp.text)
+            return
+
+        # Check new savings pot balance
+        pots_resp = monzo_client.list_pots(access_token, account_id)
+        new_savings_pence = 0
+        if pots_resp.ok:
+            for pot in pots_resp.json().get("pots", []):
+                if str(pot.get("id")) == savings_pot_id:
+                    new_savings_pence = int(pot.get("balance", 0) or 0)
+                    break
+
+        _send_feed_message(
+            title=f"Bills sweep: {_currency(sweep_amount)} moved",
+            body=f"{_currency(sweep_amount)} swept to savings. Savings balance: {_currency(new_savings_pence)}.",
+            color="#27AE60",
+        )
+
+        _notify_jarvis({
+            "action": "bills_sweep",
+            "status": "completed",
+            "balance_pence": balance_pence,
+            "float_pence": float_pence,
+            "sweep_amount_pence": sweep_amount,
+            "new_savings_balance_pence": new_savings_pence,
+        })
+
+        logger.info("event=bills_sweep_completed sweep=%s savings=%s", sweep_amount, new_savings_pence)
+
+    except Exception as exc:
+        logger.exception("event=bills_sweep_error error=%s", exc)
+
+
+# ── Weekly discretionary top-up ───────────────────────────────────────────
+
+def _weeks_until_payday(reference: datetime | None = None) -> int:
+    """Calculate calendar-weeks until the 25th (or prev working day)."""
+    today = (reference or datetime.now(UTC)).replace(tzinfo=UTC)
+    year, month = today.year, today.month
+
+    # Determine payday: 25th of current or next month, adjusted for weekends
+    def _effective_payday(y: int, m: int) -> datetime:
+        day = 25
+        try:
+            d = datetime(y, m, day, tzinfo=UTC)
+        except Exception:
+            # Shouldn't happen, but fallback
+            d = datetime(y, m, 25, tzinfo=UTC)
+        # If 25th is Saturday (5) or Sunday (6), move to previous Friday (4)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+
+    this_payday = _effective_payday(year, month)
+    if today > this_payday:
+        # Next month
+        if month == 12:
+            next_payday = _effective_payday(year + 1, 1)
+        else:
+            next_payday = _effective_payday(year, month + 1)
+    else:
+        next_payday = this_payday
+
+    days_remaining = (next_payday - today).days
+    weeks = max(1, (days_remaining + 6) // 7)  # ceil division
+    return weeks
+
+
+@app.timer_trigger(schedule="0 6 * * 1", arg_name="timer", run_on_startup=False, use_monitor=True)
+def weekly_topup(timer: func.TimerRequest) -> None:
+    """Monday: top up weekly discretionary pot from monthly pot, split across remaining weeks until payday."""
+    del timer
+
+    account_id = settings.monzo_account_id
+    monthly_pot_id = settings.monzo_monthly_pot_id
+    weekly_pot_id = settings.monzo_spending_pot_id
+
+    if not account_id or not monthly_pot_id or not weekly_pot_id:
+        logger.warning("event=weekly_topup_skipped missing pot settings")
+        return
+
+    try:
+        access_token = service.get_monzo_access_token()
+
+        # Get all pot balances
+        pots_resp = monzo_client.list_pots(access_token, account_id)
+        if not pots_resp.ok:
+            logger.warning("event=weekly_topup_pots_failed status=%s", pots_resp.status_code)
+            return
+
+        pots = pots_resp.json().get("pots", [])
+        monthly_balance = 0
+        weekly_balance = 0
+        for pot in pots:
+            pot_id = str(pot.get("id"))
+            balance = int(pot.get("balance", 0) or 0)
+            if pot_id == monthly_pot_id:
+                monthly_balance = balance
+            elif pot_id == weekly_pot_id:
+                weekly_balance = balance
+
+        if monthly_balance <= 0:
+            _send_feed_message(
+                title="Weekly top-up: nothing to move",
+                body="Your monthly discretionary pot is empty. Skipping this week's top-up.",
+                color="#3498DB",
+            )
+            _notify_jarvis({
+                "action": "weekly_topup",
+                "status": "skipped_empty",
+                "monthly_balance_pence": 0,
+                "weekly_balance_pence": weekly_balance,
+            })
+            logger.info("event=weekly_topup_skipped monthly_pot_empty")
+            return
+
+        weeks = _weeks_until_payday()
+        topup_amount = monthly_balance // weeks  # integer division, floor
+
+        if topup_amount < 100:
+            _send_feed_message(
+                title="Weekly top-up: amount too small",
+                body=f"Monthly pot has {_currency(monthly_balance)} over {weeks} weeks — only {_currency(topup_amount)}/week. Skipping.",
+                color="#3498DB",
+            )
+            _notify_jarvis({
+                "action": "weekly_topup",
+                "status": "skipped_small",
+                "monthly_balance_pence": monthly_balance,
+                "weeks_remaining": weeks,
+                "topup_amount_pence": topup_amount,
+                "weekly_balance_pence": weekly_balance,
+            })
+            logger.info("event=weekly_topup_skipped_small amount=%s", topup_amount)
+            return
+
+        # Withdraw from monthly pot → main account
+        withdraw_dedupe = str(uuid.uuid4())
+        withdraw_resp = monzo_client.withdraw_from_pot(
+            access_token, monthly_pot_id, account_id, topup_amount, withdraw_dedupe
+        )
+        if not withdraw_resp.ok:
+            logger.error("event=weekly_topup_withdraw_failed status=%s body=%s", withdraw_resp.status_code, withdraw_resp.text)
+            return
+
+        # Deposit from main account → weekly pot
+        deposit_dedupe = str(uuid.uuid4())
+        deposit_resp = monzo_client.deposit_into_pot(
+            access_token, weekly_pot_id, account_id, topup_amount, deposit_dedupe
+        )
+        if not deposit_resp.ok:
+            logger.error("event=weekly_topup_deposit_failed status=%s body=%s", deposit_resp.status_code, deposit_resp.text)
+            return
+
+        # New monthly balance after withdrawal
+        new_monthly = monthly_balance - topup_amount
+
+        # Get payday date for display
+        today = datetime.now(UTC)
+        year, month = today.year, today.month
+        if today.day > 25:
+            if month == 12:
+                month = 1
+                year += 1
+            else:
+                month += 1
+        payday_str = f"{month}/{year}"
+
+        _send_feed_message(
+            title=f"Weekly pot topped up: {_currency(topup_amount)}",
+            body=f"{_currency(topup_amount)} moved from monthly → weekly. "
+                  f"{_currency(new_monthly)} remaining in monthly, covering {weeks} week{'s' if weeks > 1 else ''} until next payday.",
+            color="#27AE60",
+        )
+
+        _notify_jarvis({
+            "action": "weekly_topup",
+            "status": "completed",
+            "monthly_balance_pence": monthly_balance,
+            "topup_amount_pence": topup_amount,
+            "new_monthly_balance_pence": new_monthly,
+            "weekly_balance_pence_before": weekly_balance,
+            "weeks_remaining": weeks,
+            "next_payday": payday_str,
+        })
+
+        logger.info(
+            "event=weekly_topup_completed amount=%s weeks=%s monthly_remaining=%s",
+            topup_amount, weeks, new_monthly,
+        )
+
+    except Exception as exc:
+        logger.exception("event=weekly_topup_error error=%s", exc)
+
+
 # ── Alert handler ─────────────────────────────────────────────────────────
 
 @app.queue_trigger(arg_name="msg", queue_name="%ALERT_QUEUE_NAME%", connection="AzureWebJobsStorage")

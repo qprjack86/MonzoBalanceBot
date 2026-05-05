@@ -88,6 +88,25 @@ class MonzoClient:
             timeout=self.timeout,
         )
 
+    def withdraw_from_pot(
+        self,
+        access_token: str,
+        pot_id: str,
+        destination_account_id: str,
+        amount_pence: int,
+        dedupe_id: str,
+    ) -> requests.Response:
+        return self.session.put(
+            f"{MONZO_API}/pots/{pot_id}/withdraw",
+            headers={"Authorization": f"Bearer {access_token}"},
+            data={
+                "destination_account_id": destination_account_id,
+                "amount": amount_pence,
+                "dedupe_id": dedupe_id,
+            },
+            timeout=self.timeout,
+        )
+
     def post_feed(self, access_token: str, account_id: str, click_url: str, title: str, body: str, color: str) -> None:
         self.session.post(
             f"{MONZO_API}/feed",
