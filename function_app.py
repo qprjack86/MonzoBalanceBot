@@ -506,10 +506,13 @@ def _weeks_until_payday(reference: datetime | None = None) -> int:
     return weeks
 
 
-@app.timer_trigger(schedule="0 6 * * 1", arg_name="timer", run_on_startup=False, use_monitor=True)
-def weekly_topup(timer: func.TimerRequest) -> None:
-    """Monday: top up weekly discretionary pot from monthly pot, split across remaining weeks until payday."""
-    del timer
+# Scheduled via OpenClaw cron (May 8 standalone, May 18 one-off, then every Monday from May 25)
+# @app.timer_trigger(schedule="0 6 * * 1", arg_name="timer", run_on_startup=False, use_monitor=True)
+def weekly_topup(timer: func.TimerRequest | None = None) -> None:
+    """Top up weekly discretionary pot from monthly pot, split across remaining weeks until payday.
+    Scheduled via OpenClaw cron jobs, not the function app timer."""
+    if timer:
+        del timer
 
     account_id = settings.monzo_account_id
     monthly_pot_id = settings.monzo_monthly_pot_id
