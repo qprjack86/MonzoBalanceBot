@@ -149,6 +149,25 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
         body=body,
         correlation_id=correlation_id,
     )
+
+    # Immediate pot balance check after a transaction webhook
+    if body.get("type") == "transaction.created":
+        try:
+            pot_balance = _get_pot_balance_pence()
+            if pot_balance is not None and pot_balance < 3000:
+                low_pot_key = f"low_pot_alert:{datetime.now(UTC).strftime('%Y-%m-%d')}"
+                if not finance_repo.get_sync_cursor(low_pot_key):
+                    alert_payload = {
+                        "action": "alert",
+                        "type": "low_weekly_pot_balance",
+                        "pot_balance_pence": pot_balance,
+                    }
+                    _notify_jarvis(alert_payload)
+                    finance_repo.set_sync_cursor(low_pot_key, datetime.now(UTC).isoformat())
+                    logger.info("event=realtime_low_pot_alert balance=%s", pot_balance)
+        except Exception as exc:
+            logger.warning("event=realtime_pot_check_failed error=%s", exc)
+
     return func.HttpResponse(result.body, status_code=result.status_code, headers={"X-Correlation-ID": correlation_id})
 
 
@@ -312,10 +331,10 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
         }, ensure_ascii=True))
         finance_repo.set_sync_cursor(overspend_key, datetime.now(UTC).isoformat())
 
-    # Low weekly pot balance check (< £50)
+    # Low weekly pot balance check (< £30)
     pot_balance = _get_pot_balance_pence()
     low_pot_key = f"low_pot_alert:{datetime.now(UTC).strftime('%Y-%m-%d')}"
-    if pot_balance is not None and pot_balance < 5000 and not finance_repo.get_sync_cursor(low_pot_key):
+    if pot_balance is not None and pot_balance < 3000 and not finance_repo.get_sync_cursor(low_pot_key):
         alert_queue.set(json.dumps({
             "type": "low_weekly_pot_balance",
             "pot_balance_pence": pot_balance,
@@ -759,7 +778,7 @@ def alert(msg: func.QueueMessage) -> None:
         pot_balance = int(payload.get("pot_balance_pence", 0))
         _send_feed_message(
             title=f"Weekly pot low: {_currency(pot_balance)}",
-            body="Your weekly discretionary pot has dropped below £50.",
+            body="Your weekly discretionary pot has dropped below £30.",
             color="#E74C3C",
         )
         _notify_jarvis({
