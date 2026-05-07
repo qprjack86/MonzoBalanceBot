@@ -827,7 +827,7 @@ def alert(msg: func.QueueMessage) -> None:
 
 # ── Dashboard APIs (consumed by Jarvis) ───────────────────────────────────
 
-@app.route(route="dashboard/summary", methods=["GET"])
+@app.route(route="dashboard/summary", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
 def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
     """Current snapshot — polled by Jarvis weekly cron or on demand."""
     del req
@@ -869,7 +869,7 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
     })
 
 
-@app.route(route="dashboard/transactions", methods=["GET"])
+@app.route(route="dashboard/transactions", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
 def dashboard_transactions(req: func.HttpRequest) -> func.HttpResponse:
     """Recent transactions — used by Jarvis for on-demand queries."""
     category = req.params.get("category")
