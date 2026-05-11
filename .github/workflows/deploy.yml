@@ -1,0 +1,50 @@
+name: Deploy to Azure Functions
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zip function app
+        run: |
+          zip -r deploy.zip . -x ".git/*" ".github/*" "*.pyc" "__pycache__/*" ".vscode/*" "tests/*" "get_token.py" ".gitignore"
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Function App
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az functionapp deployment source config-zip \
+              --resource-group monzowatchdogjs2 \
+              --name monzowatchdog-js \
+              --src deploy.zip \
+              --timeout 120
+
+      - name: Verify deployment
+        run: |
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 https://monzowatchdog-js.azurewebsites.net/api/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Function app healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Health check failed after deployment"
+          exit 1
