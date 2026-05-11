@@ -94,20 +94,37 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def _get_table_client():
+    """Create a TableClient using managed identity (preferred) or connection string (fallback)."""
+    from azure.data.tables import TableServiceClient, TableClient, UpdateMode
+    from azure.identity import DefaultAzureCredential
+
+    table_endpoint = os.environ.get("AzureWebJobsStorage__tableServiceUri")
+    if table_endpoint:
+        credential = DefaultAzureCredential()
+        return TableClient(endpoint=table_endpoint, table_name=AZURE_TABLE_NAME, credential=credential)
+
+    conn_str = AZURE_STORAGE_CONN_STR
+    if conn_str:
+        service = TableServiceClient.from_connection_string(conn_str)
+        return service.get_table_client(AZURE_TABLE_NAME)
+
+    return None
+
+
 def _save_to_azure_table(refresh_token: str, access_token: str, expires_in: int) -> bool:
     """Persist tokens to Azure Table Storage. Returns True on success."""
-    if not AZURE_STORAGE_CONN_STR:
-        return False
-
     try:
-        from azure.data.tables import TableServiceClient, UpdateMode
+        from azure.data.tables import UpdateMode
     except ImportError:
         logger.warning("azure-data-tables not installed; skipping Azure Table Storage save.")
         return False
 
+    client = _get_table_client()
+    if not client:
+        return False
+
     try:
-        service = TableServiceClient.from_connection_string(AZURE_STORAGE_CONN_STR)
-        client = service.get_table_client(AZURE_TABLE_NAME)
         try:
             client.create_table()
         except Exception:
