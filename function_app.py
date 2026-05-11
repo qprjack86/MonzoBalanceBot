@@ -179,6 +179,33 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse('{"status":"ok"}', status_code=200, mimetype="application/json")
 
 
+@app.route(route="alert_relay", methods=["POST"])
+def alert_relay(req: func.HttpRequest) -> func.HttpResponse:
+    """Relay Azure Monitor alerts to Jarvis webhook with secret header."""
+    try:
+        body = req.get_json()
+    except ValueError:
+        return func.HttpResponse("Invalid JSON", status_code=400)
+
+    essentials = (body.get("data") or {}).get("essentials") or {}
+    alert_rule = essentials.get("alertRule", "unknown")
+    description = essentials.get("description", "No description")
+    severity = essentials.get("severity", "unknown")
+    condition = essentials.get("monitorCondition", "unknown")
+
+    payload = {
+        "action": "alert",
+        "type": "azure_monitor",
+        "alert_rule": alert_rule,
+        "description": description,
+        "severity": severity,
+        "condition": condition,
+    }
+    _notify_jarvis(payload)
+    logger.info("event=alert_relay rule=%s severity=%s condition=%s", alert_rule, severity, condition)
+    return func.HttpResponse('{"status":"relayed"}', status_code=200, mimetype="application/json")
+
+
 # ── OAuth callback ─────────────────────────────────────────────────────────
 
 MONZO_AUTH_URL = "https://auth.monzo.com"
