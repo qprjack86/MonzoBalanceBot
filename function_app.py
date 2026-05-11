@@ -45,6 +45,9 @@ def _seed_categories_if_missing() -> dict[str, str]:
 
 def _pick_category(merchant: str, categories_map: dict[str, str]) -> str:
     merchant_norm = merchant.strip().lower()
+    # Monzo pot IDs start with "pot_" — mark these as transfers, not spending
+    if merchant_norm.startswith("pot_"):
+        return "transfers"
     for merchant_key, category in categories_map.items():
         if merchant_key and merchant_key in merchant_norm:
             return category
