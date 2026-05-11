@@ -48,3 +48,4 @@ jobs:
           done
           echo "❌ Health check failed after deployment"
           exit 1
+# Deploy test
