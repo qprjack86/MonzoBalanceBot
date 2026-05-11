@@ -112,10 +112,29 @@ def _weekly_target_pence() -> int:
 
 
 def _notify_jarvis(payload: dict) -> None:
-    """POST a financial event to Jarvis via the Funnel webhook."""
+    """POST a financial event to Jarvis via the Funnel webhook.
+
+    Translates legacy 'alert' actions into TaskFlow 'create_flow' format
+    that the OpenClaw webhook plugin accepts.
+    """
     if not JARVIS_WEBHOOK_SECRET:
         logger.info("event=notify_jarvis_skipped no secret configured")
         return
+
+    # Translate legacy alert format to TaskFlow create_flow
+    if payload.get("action") in ("alert", "notification"):
+        alert_type = payload.get("type", "finance_bot")
+        title = payload.get("title", payload.get("description", alert_type))
+        body = payload.get("body", json.dumps({k: v for k, v in payload.items() if k not in ("action", "type")}, default=str))
+        payload = {
+            "action": "create_flow",
+            "controllerId": alert_type.replace("_", "-"),
+            "goal": str(title)[:200],
+            "status": "running",
+            "notifyPolicy": "state_changes",
+            "currentStep": str(body)[:500],
+        }
+
     try:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -194,12 +213,12 @@ def alert_relay(req: func.HttpRequest) -> func.HttpResponse:
     condition = essentials.get("monitorCondition", "unknown")
 
     payload = {
-        "action": "alert",
-        "type": "azure_monitor",
-        "alert_rule": alert_rule,
-        "description": description,
-        "severity": severity,
-        "condition": condition,
+        "action": "create_flow",
+        "controllerId": "azure-monitor",
+        "goal": f"🚨 {alert_rule}: {description}",
+        "status": "running",
+        "notifyPolicy": "state_changes",
+        "currentStep": f"{severity} — {condition}",
     }
     _notify_jarvis(payload)
     logger.info("event=alert_relay rule=%s severity=%s condition=%s", alert_rule, severity, condition)
