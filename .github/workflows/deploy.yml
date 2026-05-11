@@ -27,25 +27,23 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Function App
-        uses: azure/CLI@v1
-        with:
-          inlineScript: |
-            az functionapp deployment source config-zip \
-              --resource-group monzowatchdogjs2 \
-              --name monzowatchdog-js \
-              --src deploy.zip \
-              --timeout 120
+        run: |
+          az functionapp deployment source config-zip \
+            --resource-group monzowatchdogjs2 \
+            --name monzowatchdog-js \
+            --src deploy.zip \
+            --timeout 120
 
       - name: Verify deployment
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6; do
+            sleep 10
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 https://monzowatchdog-js.azurewebsites.net/api/health)
+            echo "Health check $i: $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "✅ Function app healthy"
               exit 0
             fi
-            sleep 10
           done
           echo "❌ Health check failed after deployment"
           exit 1
-# Deploy test
