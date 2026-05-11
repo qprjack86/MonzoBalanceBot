@@ -183,7 +183,7 @@ class FinanceRepository:
                 continue
 
             category = str(entity.get("category", "")).strip().lower()
-            if category in {"transfers", "uncategorised"}:
+            if category in {"transfers"}:
                 continue
 
             amount_pence = int(entity.get("amount_pence", 0) or 0)
@@ -200,7 +200,7 @@ class FinanceRepository:
                 continue
 
             category = str(entity.get("category", "uncategorised")).strip().lower() or "uncategorised"
-            if category in {"transfers", "uncategorised"}:
+            if category in {"transfers"}:
                 continue
 
             amount_pence = int(entity.get("amount_pence", 0) or 0)
