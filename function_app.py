@@ -111,6 +111,43 @@ def _weekly_target_pence() -> int:
     return settings.weekly_discretionary_target_pence
 
 
+def _check_pot_card_spend(transaction_data: dict) -> None:
+    """After a transaction, check if the weekly pot balance decreased (pot card spend)
+    and notify Jack with the remaining balance."""
+    state_key = "last_known_pot_balance"
+    current_balance = _get_pot_balance_pence()
+    if current_balance is None:
+        return
+
+    last_balance_str = finance_repo.get_sync_cursor(state_key)
+
+    if last_balance_str is not None:
+        last_balance = int(last_balance_str)
+        if current_balance < last_balance:
+            # Pot card spend detected — balance went down
+            spent_pence = last_balance - current_balance
+            merchant = (
+                (transaction_data.get("data", {}).get("merchant") or {}).get("name")
+                or transaction_data.get("data", {}).get("description")
+                or "Unknown"
+            )
+
+            _notify_jarvis({
+                "action": "notification",
+                "type": "pot_card_spend",
+                "title": f"🪙 Spent \u00a3{spent_pence/100:.2f} at {merchant}",
+                "body": f"\u00a3{current_balance/100:.2f} remaining in your weekly pot",
+            })
+
+            logger.info(
+                "event=pot_spend_notified merchant=%s spent_pence=%s remaining_pence=%s",
+                merchant, spent_pence, current_balance,
+            )
+
+    # Always update stored balance for next comparison
+    finance_repo.set_sync_cursor(state_key, str(current_balance))
+
+
 def _notify_jarvis(payload: dict) -> None:
     """POST a financial event to Jarvis via the Funnel webhook.
 
@@ -189,6 +226,12 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
                     logger.info("event=realtime_low_pot_alert balance=%s", pot_balance)
         except Exception as exc:
             logger.warning("event=realtime_pot_check_failed error=%s", exc)
+
+        # Track pot card spends via balance comparison and notify Jack
+        try:
+            _check_pot_card_spend(body)
+        except Exception as exc:
+            logger.warning("event=pot_spend_check_failed error=%s", exc)
 
     return func.HttpResponse(result.body, status_code=result.status_code, headers={"X-Correlation-ID": correlation_id})
 
