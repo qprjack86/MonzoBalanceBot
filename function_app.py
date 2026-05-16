@@ -111,6 +111,33 @@ def _weekly_target_pence() -> int:
     return settings.weekly_discretionary_target_pence
 
 
+TELEGRAM_BOT_TOKEN = os.getenv("JARVIS_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("JARVIS_TELEGRAM_CHAT_ID")
+
+
+def _send_telegram_message(text: str) -> bool:
+    """Send a message via Telegram Bot API directly (near-instant delivery)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    try:
+        data = json.dumps({
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as exc:
+        logger.warning("event=telegram_send_failed error=%s", exc)
+        return False
+
+
 def _check_pot_card_spend(transaction_data: dict) -> None:
     """After a transaction, check if the weekly pot balance decreased (pot card spend)
     and notify Jack with the remaining balance."""
@@ -132,6 +159,14 @@ def _check_pot_card_spend(transaction_data: dict) -> None:
                 or "Unknown"
             )
 
+            # Near-instant Telegram notification via Bot API
+            telegram_text = (
+                f"🪙 Spent \u00a3{spent_pence/100:.2f} at {merchant}\n"
+                f"\u00a3{current_balance/100:.2f} remaining in your weekly pot"
+            )
+            _send_telegram_message(telegram_text)
+
+            # Also create flow for tracking (via existing webhook path)
             _notify_jarvis({
                 "action": "notification",
                 "type": "pot_card_spend",
