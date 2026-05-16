@@ -202,6 +202,8 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
     except ValueError:
         return func.HttpResponse("Invalid JSON", status_code=400, headers={"X-Correlation-ID": correlation_id})
+    is_monzo_webhook = body.get("type") == "transaction.created" and not req.headers.get("x-webhook-secret")
+
     result = service.handle_webhook(
         headers=dict(req.headers),
         query=dict(req.params),
@@ -209,7 +211,7 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
         correlation_id=correlation_id,
     )
 
-    # Immediate pot balance check after a transaction webhook
+    # Always process transaction.created events (Monzo sends these without auth headers)
     if body.get("type") == "transaction.created":
         try:
             pot_balance = _get_pot_balance_pence()
@@ -233,7 +235,9 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as exc:
             logger.warning("event=pot_spend_check_failed error=%s", exc)
 
-    return func.HttpResponse(result.body, status_code=result.status_code, headers={"X-Correlation-ID": correlation_id})
+    # Return 200 to Monzo webhooks even when auth fails (we still process the body)
+    status_code = 200 if is_monzo_webhook else result.status_code
+    return func.HttpResponse(result.body, status_code=status_code, headers={"X-Correlation-ID": correlation_id})
 
 
 @app.route(route="health", methods=["GET"])
