@@ -30,8 +30,6 @@ monzo_client = MonzoClient(build_session(), settings.request_timeout)
 service = WebhookService(settings, monzo_client, store)
 finance_repo = FinanceRepository(settings)
 
-JARVIS_WEBHOOK_URL = os.getenv("JARVIS_WEBHOOK_URL", "https://openclaw.tailc5daaa.ts.net/plugins/webhooks/finance-bot")
-JARVIS_WEBHOOK_SECRET = os.getenv("JARVIS_WEBHOOK_SECRET", "")
 
 
 def _seed_categories_if_missing() -> dict[str, str]:
@@ -111,22 +109,20 @@ def _weekly_target_pence() -> int:
     return settings.weekly_discretionary_target_pence
 
 
-TELEGRAM_BOT_TOKEN = os.getenv("JARVIS_TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("JARVIS_TELEGRAM_CHAT_ID")
-
-
 def _send_telegram_message(text: str) -> bool:
     """Send a message via Telegram Bot API directly (near-instant delivery)."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    bot_token = settings.telegram_bot_token
+    chat_id = settings.telegram_chat_id
+    if not bot_token or not chat_id:
         return False
     try:
         data = json.dumps({
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML",
         }).encode("utf-8")
         req = urllib.request.Request(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -189,7 +185,8 @@ def _notify_jarvis(payload: dict) -> None:
     Translates legacy 'alert' actions into TaskFlow 'create_flow' format
     that the OpenClaw webhook plugin accepts.
     """
-    if not JARVIS_WEBHOOK_SECRET:
+    secret = settings.jarvis_webhook_secret
+    if not secret:
         logger.info("event=notify_jarvis_skipped no secret configured")
         return
 
@@ -210,11 +207,11 @@ def _notify_jarvis(payload: dict) -> None:
     try:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            JARVIS_WEBHOOK_URL,
+            settings.jarvis_webhook_url,
             data=data,
             headers={
                 "Content-Type": "application/json",
-                "x-openclaw-webhook-secret": JARVIS_WEBHOOK_SECRET,
+                "x-openclaw-webhook-secret": secret,
             },
             method="POST",
         )
@@ -250,7 +247,7 @@ def monzo_webhook(req: func.HttpRequest) -> func.HttpResponse:
     if body.get("type") == "transaction.created":
         try:
             pot_balance = _get_pot_balance_pence()
-            if pot_balance is not None and pot_balance < 3000:
+            if pot_balance is not None and pot_balance < settings.low_pot_threshold_pence:
                 low_pot_key = f"low_pot_alert:{datetime.now(UTC).strftime('%Y-%m-%d')}"
                 if not finance_repo.get_sync_cursor(low_pot_key):
                     alert_payload = {
@@ -312,10 +309,6 @@ def alert_relay(req: func.HttpRequest) -> func.HttpResponse:
 MONZO_AUTH_URL = "https://auth.monzo.com"
 MONZO_API_URL = "https://api.monzo.com"
 
-# IMPORTANT: Register this exact redirect URI in the Monzo developer console.
-# If your function app name differs, update this before generating the auth URL.
-OAUTH_REDIRECT_URI = os.getenv("MONZO_OAUTH_REDIRECT_URI", "https://monzowatchdog-js.azurewebsites.net/api/oauth_callback")
-
 
 @app.route(route="oauth_callback", methods=["GET"])
 def oauth_callback(req: func.HttpRequest) -> func.HttpResponse:
@@ -345,7 +338,7 @@ def oauth_callback(req: func.HttpRequest) -> func.HttpResponse:
                 "grant_type": "authorization_code",
                 "client_id": settings.monzo_client_id,
                 "client_secret": settings.monzo_client_secret,
-                "redirect_uri": OAUTH_REDIRECT_URI,
+                "redirect_uri": settings.oauth_redirect_uri,
                 "code": code,
             },
             timeout=(5, 15),
@@ -462,10 +455,10 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
         }, ensure_ascii=True))
         finance_repo.set_sync_cursor(overspend_key, datetime.now(UTC).isoformat())
 
-    # Low weekly pot balance check (< £30)
+    # Low weekly pot balance check
     pot_balance = _get_pot_balance_pence()
     low_pot_key = f"low_pot_alert:{datetime.now(UTC).strftime('%Y-%m-%d')}"
-    if pot_balance is not None and pot_balance < 3000 and not finance_repo.get_sync_cursor(low_pot_key):
+    if pot_balance is not None and pot_balance < settings.low_pot_threshold_pence and not finance_repo.get_sync_cursor(low_pot_key):
         alert_queue.set(json.dumps({
             "type": "low_weekly_pot_balance",
             "pot_balance_pence": pot_balance,
@@ -482,7 +475,7 @@ def ingest_monzo(timer: func.TimerRequest, alert_queue: func.Out[str]) -> None:
                 balance_resp = monzo_client.get_balance(access_token, account_id)
                 if balance_resp.ok:
                     balance = balance_resp.json().get("balance", 0)
-                    if balance < 20000:  # £200 threshold
+                    if balance < settings.low_balance_before_bills_threshold_pence:
                         alert_queue.set(json.dumps({
                             "type": "low_balance_before_bills",
                             "balance_pence": balance,
@@ -582,8 +575,9 @@ def bills_sweep(timer: func.TimerRequest) -> None:
             })
             return
 
-        # Sweep to savings pot
-        dedupe_id = str(uuid.uuid4())
+        # Sweep to savings pot with deterministic dedupe ID
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        dedupe_id = f"bills-sweep-{today_str}"
         deposit_resp = monzo_client.deposit_into_pot(
             access_token, savings_pot_id, account_id, sweep_amount, dedupe_id
         )
@@ -727,8 +721,9 @@ def weekly_topup(timer: func.TimerRequest | None = None) -> None:
             logger.info("event=weekly_topup_skipped_small amount=%s", topup_amount)
             return
 
-        # Withdraw from monthly pot → main account
-        withdraw_dedupe = str(uuid.uuid4())
+        # Withdraw from monthly pot → main account with deterministic dedupe ID
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        withdraw_dedupe = f"weekly-topup-withdraw-{today_str}"
         withdraw_resp = monzo_client.withdraw_from_pot(
             access_token, monthly_pot_id, account_id, topup_amount, withdraw_dedupe
         )
@@ -805,14 +800,12 @@ def payday_topup(timer: func.TimerRequest) -> None:
 
         # Determine effective payday for this month
         def _effective_payday(y: int, m: int) -> datetime:
-            from datetime import timedelta
             d = datetime(y, m, 25, tzinfo=UTC)
             # Move back if weekend
             while d.weekday() >= 5:
                 d -= timedelta(days=1)
-            # Move back if bank holiday (May last Monday = 25 May 2026, which is BH)
-            # Simple check: if 25th is a Monday and month is May, it's the Spring BH
-            if d.month == 5 and d.weekday() == 0 and d.day == 25:
+            # Move back if Spring Bank Holiday (last Monday of May falls on/after 25th)
+            if d.month == 5 and d.weekday() == 0 and d.day >= 25:
                 d -= timedelta(days=3)  # Friday before
             return d
 
@@ -831,9 +824,10 @@ def payday_topup(timer: func.TimerRequest) -> None:
 
         access_token = service.get_monzo_access_token()
 
-        # Transfer £428 to monthly discretionary pot
-        amount_pence = 42800
-        dedupe_id = str(uuid.uuid4())
+        # Transfer to monthly discretionary pot with deterministic dedupe ID
+        amount_pence = settings.payday_topup_amount_pence
+        payday_str = payday.strftime("%Y-%m-%d")
+        dedupe_id = f"payday-topup-{payday_str}"
         deposit_resp = monzo_client.deposit_into_pot(
             access_token, monthly_pot_id, account_id, amount_pence, dedupe_id
         )
@@ -907,9 +901,10 @@ def alert(msg: func.QueueMessage) -> None:
 
     if event_type == "low_weekly_pot_balance":
         pot_balance = int(payload.get("pot_balance_pence", 0))
+        threshold_display = f"£{settings.low_pot_threshold_pence / 100:.0f}"
         _send_feed_message(
             title=f"Weekly pot low: {_currency(pot_balance)}",
-            body="Your weekly discretionary pot has dropped below £30.",
+            body=f"Your weekly discretionary pot has dropped below {threshold_display}.",
             color="#E74C3C",
         )
         _notify_jarvis({
@@ -967,8 +962,15 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
     weekly_spend = finance_repo.weekly_spend_pence(week_start_iso, week_end.isoformat())
     weekly_target = _weekly_target_pence()
 
-    # MBNA £3,319 at £93/month — clears April 2029
-    debt_balance = 331900
+    debt_entity = finance_repo.get_debt_tracker() or {}
+    debt_balance = int(debt_entity.get("current_balance_pence", 331900))
+    debt_monthly_payment = int(
+        debt_entity.get("monthly_payment_target_pence", settings.debt_monthly_payment_target_pence)
+    )
+    debt_target_balance = int(debt_entity.get("target_balance_pence", 0))
+    debt_months_remaining = debt_entity.get("months_remaining")
+    debt_target_months = debt_entity.get("target_months", settings.debt_target_months)
+    debt_on_track = bool(debt_entity.get("on_track", True))
 
     emergency = finance_repo.get_emergency_fund() or {}
     emergency_current = int(emergency.get("current_balance_pence", 0))
@@ -978,14 +980,24 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
     latest_advice = finance_repo.get_latest_advice() or {}
     pot_balance = _get_pot_balance_pence()
 
+    last_natwest = finance_repo.get_last_upload("natwest")
+    last_paypal = finance_repo.get_last_upload("paypal")
+    last_uploads = {
+        "natwest": last_natwest.get("processed_at") if last_natwest else None,
+        "paypal": last_paypal.get("processed_at") if last_paypal else None,
+    }
+
     return _json_response({
         "weekly_spend_pence": weekly_spend,
         "weekly_target_pence": weekly_target,
         "weekly_progress": min(1.0, weekly_spend / weekly_target) if weekly_target > 0 else 0,
         "debt": {
             "current_balance_pence": debt_balance,
-            "monthly_payment_pence": 9300,
-            "target_balance_pence": 0,
+            "monthly_payment_pence": debt_monthly_payment,
+            "target_balance_pence": debt_target_balance,
+            "months_remaining": debt_months_remaining,
+            "target_months": debt_target_months,
+            "on_track": debt_on_track,
         },
         "emergency_fund": {
             "current_balance_pence": emergency_current,
@@ -997,6 +1009,7 @@ def dashboard_summary(req: func.HttpRequest) -> func.HttpResponse:
             "week_start_iso": latest_advice.get("week_start_iso"),
             "text": latest_advice.get("advice_text", "No advice yet."),
         },
+        "last_uploads": last_uploads,
     })
 
 

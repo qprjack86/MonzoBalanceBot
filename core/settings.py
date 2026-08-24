@@ -59,6 +59,14 @@ class Settings:
     azure_openai_endpoint: str | None = None
     azure_openai_api_version: str = "2024-10-21"
     azure_openai_deployment: str | None = None
+    jarvis_webhook_url: str = "https://openclaw.tailc5daaa.ts.net/plugins/webhooks/finance-bot"
+    jarvis_webhook_secret: str = ""
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    payday_topup_amount_pence: int = 42800
+    low_pot_threshold_pence: int = 3000
+    low_balance_before_bills_threshold_pence: int = 20000
+    oauth_redirect_uri: str = "https://monzowatchdog-js.azurewebsites.net/api/oauth_callback"
 
 
 def load_settings() -> Settings:
@@ -99,4 +107,12 @@ def load_settings() -> Settings:
         debt_target_months=int(_get_env("DEBT_TARGET_MONTHS", default=36)),
         debt_monthly_payment_target_pence=int(_get_env("DEBT_MONTHLY_PAYMENT_TARGET_PENCE", default=9300)),
         emergency_fund_target_pence=int(_get_env("EMERGENCY_FUND_TARGET_PENCE", default=720000)),
+        jarvis_webhook_url=str(_get_env("JARVIS_WEBHOOK_URL", default="https://openclaw.tailc5daaa.ts.net/plugins/webhooks/finance-bot")),
+        jarvis_webhook_secret=str(_get_env("JARVIS_WEBHOOK_SECRET", default="")),
+        telegram_bot_token=_get_env("JARVIS_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
+        telegram_chat_id=_get_env("JARVIS_TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"),
+        payday_topup_amount_pence=int(_get_env("PAYDAY_TOPUP_AMOUNT_PENCE", default=42800)),
+        low_pot_threshold_pence=int(_get_env("LOW_POT_THRESHOLD_PENCE", default=3000)),
+        low_balance_before_bills_threshold_pence=int(_get_env("LOW_BALANCE_BEFORE_BILLS_THRESHOLD_PENCE", default=20000)),
+        oauth_redirect_uri=str(_get_env("MONZO_OAUTH_REDIRECT_URI", default="https://monzowatchdog-js.azurewebsites.net/api/oauth_callback")),
     )
