@@ -138,6 +138,18 @@ def _check_pot_card_spend(transaction_data: dict) -> None:
     """After a transaction, check if the weekly pot balance decreased (pot card spend)
     and notify Jack with the remaining balance."""
     state_key = "last_known_pot_balance"
+    tx_data = transaction_data.get("data", {})
+    tx_id = tx_data.get("id")
+
+    # Dedupe by transaction ID: a pot card spend fires multiple transaction.created
+    # webhooks (pot transfer + merchant transaction), and each can be delivered more
+    # than once. claim() is an atomic insert-if-not-exists, so only the first
+    # invocation for a given transaction proceeds — this kills the concurrent
+    # read-modify-write race on last_known_pot_balance that caused duplicate alerts.
+    if tx_id and not store.claim(f"pot_spend:{tx_id}", settings.seen_ttl):
+        logger.info("event=pot_spend_duplicate_skipped tx_id=%s", tx_id)
+        return
+
     current_balance = _get_pot_balance_pence()
     if current_balance is None:
         return
@@ -147,18 +159,26 @@ def _check_pot_card_spend(transaction_data: dict) -> None:
     if last_balance_str is not None:
         last_balance = int(last_balance_str)
         if current_balance < last_balance:
-            # Pot card spend detected — balance went down
+            # Filter out pot transfers (funding leg of pot card spends). These must
+            # never notify, and must NOT update the baseline either — the paired
+            # merchant event for the same spend follows within milliseconds and needs
+            # to still see the drop so it can notify. Updating the baseline here would
+            # swallow the real spend notification entirely.
+            merchant_obj = tx_data.get("merchant") or {}
+            merchant_id = merchant_obj.get("id", "") if isinstance(merchant_obj, dict) else ""
+            tx_category = (tx_data.get("category") or "").lower()
+            if merchant_id.startswith("pot_") or tx_category == "transfers":
+                logger.info("event=pot_transfer_skipped tx_id=%s", tx_id)
+                return
+
+            # Pot card spend detected — balance went down from a real purchase
             spent_pence = last_balance - current_balance
-            merchant = (
-                (transaction_data.get("data", {}).get("merchant") or {}).get("name")
-                or transaction_data.get("data", {}).get("description")
-                or "Unknown"
-            )
+            merchant = merchant_obj.get("name") or tx_data.get("description") or "Unknown"
 
             # Near-instant Telegram notification via Bot API
             telegram_text = (
-                f"🪙 Spent \u00a3{spent_pence/100:.2f} at {merchant}\n"
-                f"\u00a3{current_balance/100:.2f} remaining in your weekly pot"
+                f"🪙 Spent £{spent_pence/100:.2f} at {merchant}\n"
+                f"£{current_balance/100:.2f} remaining in your weekly pot"
             )
             _send_telegram_message(telegram_text)
 
@@ -166,8 +186,8 @@ def _check_pot_card_spend(transaction_data: dict) -> None:
             _notify_jarvis({
                 "action": "notification",
                 "type": "pot_card_spend",
-                "title": f"🪙 Spent \u00a3{spent_pence/100:.2f} at {merchant}",
-                "body": f"\u00a3{current_balance/100:.2f} remaining in your weekly pot",
+                "title": f"🪙 Spent £{spent_pence/100:.2f} at {merchant}",
+                "body": f"£{current_balance/100:.2f} remaining in your weekly pot",
             })
 
             logger.info(

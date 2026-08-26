@@ -40,6 +40,15 @@ class DedupeStore(Protocol):
     def seen(self, key: str, ttl_seconds: int) -> bool:
         ...
 
+    def claim(self, key: str, ttl_seconds: int) -> bool:
+        """Atomically claim a key (insert-if-not-exists).
+
+        Returns True if this caller won the claim (key was absent), False if the
+        key was already claimed (duplicate). Unlike seen(), the check-and-set is
+        atomic at the storage layer, so concurrent callers can't both win.
+        """
+        ...
+
 
 class StateStore(TokenStore, AlertStateStore, DedupeStore, Protocol):
     pass

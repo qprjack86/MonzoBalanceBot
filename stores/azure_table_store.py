@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 from azure.core import MatchConditions
-from azure.core.exceptions import AzureError, ResourceModifiedError, ResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 from azure.data.tables import TableClient, TableServiceClient, UpdateMode
 from azure.identity import DefaultAzureCredential
 
@@ -130,3 +130,43 @@ class AzureTableStore:
             mode=UpdateMode.MERGE,
         )
         return False
+
+    def claim(self, key: str, ttl_seconds: int) -> bool:
+        """Atomically claim a key (conditional insert). Returns True if this caller
+        won the claim (key was absent), False if the key was already claimed.
+
+        Unlike seen(), the check-and-insert is a single atomic operation, so
+        concurrent callers can't both win — this is the safe primitive for
+        read-modify-write races like the pot spend balance cursor.
+        """
+        table_client = self._get_table_client()
+        dedupe_partition = f"{self.settings.partition_key}_dedupe"
+        now = time.time()
+
+        try:
+            table_client.create_entity(
+                {
+                    "PartitionKey": dedupe_partition,
+                    "RowKey": key,
+                    "seen_at": now,
+                },
+                match_condition=MatchConditions.IfNotExists,
+            )
+            return True
+        except ResourceExistsError:
+            # Already exists — re-claim only if the previous claim is stale.
+            try:
+                existing = table_client.get_entity(partition_key=dedupe_partition, row_key=key)
+                seen_at = float(existing.get("seen_at", 0) or 0)
+                if now - seen_at <= ttl_seconds:
+                    return False
+                existing["seen_at"] = now
+                table_client.update_entity(existing, mode=UpdateMode.REPLACE)
+                return True
+            except ResourceNotFoundError:
+                # Deleted between the failed insert and this read — treat as available.
+                return True
+            except AzureError:
+                # Storage hiccup: fail open (allow processing) rather than risk
+                # swallowing a real spend notification on a dedupe lookup error.
+                return True

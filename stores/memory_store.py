@@ -52,3 +52,17 @@ class MemoryStore:
 
         self._seen[key] = now
         return False
+
+    def claim(self, key: str, ttl_seconds: int) -> bool:
+        """Atomically claim a key. Returns True if this caller won the claim
+        (key was absent), False if the key was already claimed within TTL."""
+        now = time.time()
+        for k in list(self._seen.keys()):
+            if now - self._seen[k] > ttl_seconds:
+                del self._seen[k]
+
+        if key in self._seen:
+            return False
+
+        self._seen[key] = now
+        return True
